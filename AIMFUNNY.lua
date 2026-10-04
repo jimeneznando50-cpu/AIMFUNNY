@@ -1,5 +1,12 @@
--- language: Lua, file: AIMFUNY.lua, target: Roblox executor
--- dependencias: Drawing API, mousemoverel, getgenv, HttpGet (LinoriaLib)
+-- AIMFUNNY.lua | GUI propia (sin LinoriaLib), redimensionable y ligera
+-- Requiere: Drawing API, mousemoverel, getgenv
+
+--// ============================================================
+--// LIMPIEZA DE EJECUCION ANTERIOR
+--// ============================================================
+if getgenv().AIMFUNY and getgenv().AIMFUNY.Unload then
+    pcall(getgenv().AIMFUNY.Unload)
+end
 
 --// ============================================================
 --// SERVICIOS
@@ -7,9 +14,25 @@
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
 local Camera           = workspace.CurrentCamera
 local LocalPlayer      = Players.LocalPlayer
-local Mouse            = LocalPlayer:GetMouse()
+
+--// ============================================================
+--// TEMA (cambia ACCENT para otro color: azul 80,160,255 / rojo 255,80,80)
+--// ============================================================
+local THEME = {
+    Accent = Color3.fromRGB(70, 220, 120),
+    Bg     = Color3.fromRGB(16, 16, 19),
+    Side   = Color3.fromRGB(21, 21, 25),
+    Panel  = Color3.fromRGB(26, 26, 31),
+    Stroke = Color3.fromRGB(44, 44, 52),
+    Text   = Color3.fromRGB(235, 235, 240),
+    Sub    = Color3.fromRGB(140, 140, 150),
+    Off    = Color3.fromRGB(52, 52, 60),
+}
+
+local MIN_W, MIN_H = 460, 300
 
 --// ============================================================
 --// TRACKING DE CONEXIONES
@@ -24,13 +47,13 @@ end
 --// DRAWING INIT
 --// ============================================================
 local Drawing_new = Drawing and Drawing.new or function()
-    error("Drawing API required — usa un executor con Drawing")
+    error("Drawing API required: usa un executor con Drawing")
 end
 
 --// ============================================================
 --// STATE
 --// ============================================================
-getgenv().AIMFUNY = getgenv().AIMFUNY or {}
+getgenv().AIMFUNY = {}
 local State = getgenv().AIMFUNY
 
 State.Aimbot = {
@@ -267,103 +290,550 @@ track(RunService.RenderStepped:Connect(function()
 end))
 
 --// ============================================================
---// GUI (LinoriaLib)
+--// HELPERS DE GUI
 --// ============================================================
-local repo = "https://raw.githubusercontent.com/Progoonerfrfr/LinoriaLib/main/"
-local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+local order = 0
+local function nxt()
+    order += 1
+    return order
+end
 
-local Window = Library:CreateWindow({
-    Title = "AIMFUNY",
-    Center = true,
-    AutoShow = true,
-    TabPadding = 8,
-    MenuFadeTime = 0.2,
-})
+local function new(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
 
-local Tabs = {
-    Aimbot   = Window:AddTab("Aimbot"),
-    ESP      = Window:AddTab("ESP"),
-    Settings = Window:AddTab("Settings"),
-}
+local function corner(o, r)
+    return new("UICorner", { CornerRadius = UDim.new(0, r) }, o)
+end
 
---// AIMBOT TAB
-local AimbotGroup = Tabs.Aimbot:AddLeftGroupbox("Aimbot")
+local function stroke(o, color, thickness)
+    return new("UIStroke", {
+        Color = color or THEME.Stroke,
+        Thickness = thickness or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, o)
+end
 
-AimbotGroup:AddToggle("aim_enabled", {
-    Text = "Enable Aimbot", Default = false,
-    Callback = function(v) State.Aimbot.Enabled = v end,
-})
+local function tw(o, props, t)
+    TweenService:Create(o, TweenInfo.new(t or 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+end
 
-AimbotGroup:AddSlider("aim_fov", {
-    Text = "FOV", Default = 120, Min = 10, Max = 500, Rounding = 0,
-    Callback = function(v) State.Aimbot.FOV = v end,
-})
+local function text_label(parent, str, size, color, font)
+    return new("TextLabel", {
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Text = str,
+        TextSize = size or 13,
+        TextColor3 = color or THEME.Text,
+        Font = font or Enum.Font.GothamMedium,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, parent)
+end
 
-AimbotGroup:AddSlider("aim_dist", {
-    Text = "Max Distance", Default = 500, Min = 50, Max = 2000, Rounding = 0,
-    Callback = function(v) State.Aimbot.Distance = v end,
-})
+local function is_press(i)
+    return i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch
+end
 
-AimbotGroup:AddToggle("aim_show_fov", {
-    Text = "Show FOV Circle", Default = false,
-    Callback = function(v) State.Aimbot.ShowFOV = v end,
-})
+local function is_move(i)
+    return i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch
+end
 
-AimbotGroup:AddSlider("aim_smooth", {
-    Text = "Smoothness", Default = 0.15, Min = 0.01, Max = 1, Rounding = 2,
-    Callback = function(v) State.Aimbot.Smoothness = v end,
-})
+-- arrastrar "target" agarrando "handle". Devuelve funcion que dice si hubo movimiento
+local function make_draggable(handle, target)
+    local dragging, drag_start, start_pos, moved = false, nil, nil, false
+    handle.InputBegan:Connect(function(i)
+        if is_press(i) then
+            dragging = true
+            moved = false
+            drag_start = i.Position
+            start_pos = target.Position
+        end
+    end)
+    track(UserInputService.InputChanged:Connect(function(i)
+        if dragging and is_move(i) then
+            local d = i.Position - drag_start
+            if d.Magnitude > 4 then moved = true end
+            target.Position = UDim2.new(
+                start_pos.X.Scale, start_pos.X.Offset + d.X,
+                start_pos.Y.Scale, start_pos.Y.Offset + d.Y
+            )
+        end
+    end))
+    track(UserInputService.InputEnded:Connect(function(i)
+        if is_press(i) then dragging = false end
+    end))
+    return function() return moved end
+end
 
-AimbotGroup:AddToggle("aim_mouse_follow", {
-    Text = "Mouse Follow (toggle)", Default = false,
-    Callback = function(v) State.Aimbot.MouseFollow = v end,
-})
+--// ============================================================
+--// VENTANA
+--// ============================================================
+local gui_parent = (gethui and gethui()) or game:GetService("CoreGui")
+local function make_screengui(name, order_value)
+    local g = new("ScreenGui", {
+        Name = name,
+        ResetOnSpawn = false,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        IgnoreGuiInset = true,
+        DisplayOrder = order_value,
+    })
+    local ok = pcall(function() g.Parent = gui_parent end)
+    if not ok then g.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+    return g
+end
 
-AimbotGroup:AddDropdown("aim_part", {
-    Text = "Target Part",
-    Values = { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" },
-    Default = 1,
-    Callback = function(v) State.Aimbot.TargetPart = v end,
-})
+local gui = make_screengui("AIMFUNNY_GUI", 1000)
+local float_gui = make_screengui("AIMFUNNY_Float", 1001)
+float_gui.Enabled = false
 
---// ESP TAB
-local ESPGroup = Tabs.ESP:AddLeftGroupbox("ESP")
+local main = new("Frame", {
+    Name = "Main",
+    Size = UDim2.fromOffset(580, 380),
+    Position = UDim2.new(0.5, -290, 0.5, -190),
+    BackgroundColor3 = THEME.Bg,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Active = true,
+}, gui)
+corner(main, 10)
+stroke(main)
 
-ESPGroup:AddToggle("esp_enabled", {
-    Text = "Enable ESP", Default = false,
-    Callback = function(v) State.ESP.Enabled = v end,
-})
-ESPGroup:AddToggle("esp_tracers", {
-    Text = "Tracers", Default = true,
-    Callback = function(v) State.ESP.Tracers = v end,
-})
-ESPGroup:AddToggle("esp_boxes", {
-    Text = "Boxes", Default = true,
-    Callback = function(v) State.ESP.Boxes = v end,
-})
-ESPGroup:AddToggle("esp_names", {
-    Text = "Names", Default = true,
-    Callback = function(v) State.ESP.Names = v end,
-})
-ESPGroup:AddToggle("esp_health", {
-    Text = "Health", Default = true,
-    Callback = function(v) State.ESP.Health = v end,
-})
-ESPGroup:AddToggle("esp_dist", {
-    Text = "Distance (studs)", Default = true,
-    Callback = function(v) State.ESP.Distance = v end,
-})
-ESPGroup:AddSlider("esp_max_dist", {
-    Text = "Max Render Distance", Default = 1000, Min = 100, Max = 5000, Rounding = 0,
-    Callback = function(v) State.ESP.MaxDist = v end,
-})
+-- barra de titulo
+local titlebar = new("Frame", {
+    Size = UDim2.new(1, 0, 0, 38),
+    BackgroundColor3 = THEME.Side,
+    BorderSizePixel = 0,
+}, main)
 
---// SETTINGS TAB
-local SettingsGroup = Tabs.Settings:AddLeftGroupbox("Menu")
+new("Frame", {
+    Size = UDim2.fromOffset(8, 8),
+    Position = UDim2.new(0, 14, 0.5, -4),
+    BackgroundColor3 = THEME.Accent,
+    BorderSizePixel = 0,
+}, titlebar)
+corner(titlebar:FindFirstChildOfClass("Frame"), 4)
 
-local function full_unload()
+local title = text_label(titlebar, "AIMFUNNY", 14, THEME.Text, Enum.Font.GothamBold)
+title.Position = UDim2.new(0, 30, 0, 0)
+title.Size = UDim2.new(0, 120, 1, 0)
+
+local version = text_label(titlebar, "v1.0", 11, THEME.Sub)
+version.Position = UDim2.new(0, 104, 0, 1)
+version.Size = UDim2.new(0, 40, 1, 0)
+
+new("Frame", {
+    Size = UDim2.new(1, 0, 0, 1),
+    Position = UDim2.new(0, 0, 1, -1),
+    BackgroundColor3 = THEME.Stroke,
+    BorderSizePixel = 0,
+}, titlebar)
+
+local function title_button(str, x_offset, hover_color)
+    local b = new("TextButton", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, x_offset, 0.5, 0),
+        Size = UDim2.fromOffset(28, 24),
+        BackgroundColor3 = THEME.Side,
+        BorderSizePixel = 0,
+        Text = str,
+        TextColor3 = THEME.Sub,
+        TextSize = 14,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+    }, titlebar)
+    corner(b, 6)
+    b.MouseEnter:Connect(function()
+        tw(b, { BackgroundColor3 = hover_color, TextColor3 = THEME.Text })
+    end)
+    b.MouseLeave:Connect(function()
+        tw(b, { BackgroundColor3 = THEME.Side, TextColor3 = THEME.Sub })
+    end)
+    return b
+end
+
+local close_btn = title_button("X", -8, Color3.fromRGB(150, 40, 40))
+local min_btn   = title_button("-", -40, THEME.Off)
+
+make_draggable(titlebar, main)
+
+-- barra lateral
+local sidebar = new("Frame", {
+    Position = UDim2.new(0, 0, 0, 38),
+    Size = UDim2.new(0, 128, 1, -38),
+    BackgroundColor3 = THEME.Side,
+    BorderSizePixel = 0,
+}, main)
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+}, sidebar)
+new("UIListLayout", {
+    Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
+}, sidebar)
+
+new("Frame", {
+    Position = UDim2.new(0, 128, 0, 38),
+    Size = UDim2.new(0, 1, 1, -38),
+    BackgroundColor3 = THEME.Stroke,
+    BorderSizePixel = 0,
+}, main)
+
+local content = new("Frame", {
+    Position = UDim2.new(0, 129, 0, 38),
+    Size = UDim2.new(1, -129, 1, -38),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+}, main)
+
+-- grip para cambiar tamano
+local grip = new("Frame", {
+    AnchorPoint = Vector2.new(1, 1),
+    Position = UDim2.new(1, 0, 1, 0),
+    Size = UDim2.fromOffset(20, 20),
+    BackgroundTransparency = 1,
+    Active = true,
+    ZIndex = 10,
+}, main)
+for i = 1, 2 do
+    new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 3 + (i - 1) * 4, 0.5, 3 + (i - 1) * 4),
+        Size = UDim2.fromOffset(i == 1 and 10 or 5, 1),
+        Rotation = -45,
+        BackgroundColor3 = THEME.Sub,
+        BorderSizePixel = 0,
+        ZIndex = 10,
+    }, grip)
+end
+
+local resizing, rs_start, rs_size = false, nil, nil
+grip.InputBegan:Connect(function(i)
+    if is_press(i) then
+        resizing = true
+        rs_start = i.Position
+        rs_size = main.AbsoluteSize
+    end
+end)
+track(UserInputService.InputChanged:Connect(function(i)
+    if resizing and is_move(i) then
+        local d = i.Position - rs_start
+        local vp = Camera.ViewportSize
+        main.Size = UDim2.fromOffset(
+            math.clamp(rs_size.X + d.X, MIN_W, vp.X - 40),
+            math.clamp(rs_size.Y + d.Y, MIN_H, vp.Y - 40)
+        )
+    end
+end))
+track(UserInputService.InputEnded:Connect(function(i)
+    if is_press(i) then resizing = false end
+end))
+
+--// ============================================================
+--// COMPONENTES
+--// ============================================================
+local pages, tab_buttons = {}, {}
+
+local function select_tab(name)
+    for n, page in pairs(pages) do page.Visible = (n == name) end
+    for n, b in pairs(tab_buttons) do
+        local active = (n == name)
+        tw(b, {
+            BackgroundColor3 = active and THEME.Panel or THEME.Side,
+            TextColor3 = active and THEME.Text or THEME.Sub,
+        })
+        tw(b.UIStroke, { Transparency = active and 0 or 1 })
+    end
+end
+
+local function add_tab(name)
+    local b = new("TextButton", {
+        Size = UDim2.new(1, 0, 0, 32),
+        BackgroundColor3 = THEME.Side,
+        BorderSizePixel = 0,
+        Text = name,
+        TextColor3 = THEME.Sub,
+        TextSize = 13,
+        Font = Enum.Font.GothamMedium,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        AutoButtonColor = false,
+        LayoutOrder = nxt(),
+    }, sidebar)
+    corner(b, 6)
+    new("UIPadding", { PaddingLeft = UDim.new(0, 12) }, b)
+    local s = stroke(b, THEME.Accent, 1)
+    s.Transparency = 1
+    b.MouseButton1Click:Connect(function() select_tab(name) end)
+    tab_buttons[name] = b
+
+    local page = new("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = THEME.Off,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Visible = false,
+    }, content)
+    new("UIPadding", {
+        PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 16),
+        PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14),
+    }, page)
+    new("UIListLayout", {
+        Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder,
+    }, page)
+    pages[name] = page
+    return page
+end
+
+local function add_section(page, title_str)
+    local f = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = THEME.Panel,
+        BorderSizePixel = 0,
+        LayoutOrder = nxt(),
+    }, page)
+    corner(f, 8)
+    stroke(f)
+    new("UIPadding", {
+        PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 12),
+        PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12),
+    }, f)
+    new("UIListLayout", {
+        Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
+    }, f)
+    local t = text_label(f, string.upper(title_str), 11, THEME.Sub, Enum.Font.GothamBold)
+    t.Size = UDim2.new(1, 0, 0, 16)
+    t.LayoutOrder = nxt()
+    return f
+end
+
+local function add_toggle(sec, text, default, callback)
+    local row = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 26),
+        BackgroundTransparency = 1,
+        LayoutOrder = nxt(),
+    }, sec)
+    local lbl = text_label(row, text, 13, THEME.Text)
+    lbl.Size = UDim2.new(1, -50, 1, 0)
+
+    local track_f = new("Frame", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.fromOffset(38, 20),
+        BackgroundColor3 = default and THEME.Accent or THEME.Off,
+        BorderSizePixel = 0,
+    }, row)
+    corner(track_f, 10)
+    local knob = new("Frame", {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = default and UDim2.new(1, -17, 0.5, 0) or UDim2.new(0, 3, 0.5, 0),
+        Size = UDim2.fromOffset(14, 14),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BorderSizePixel = 0,
+    }, track_f)
+    corner(knob, 7)
+
+    local state = default
+    local btn = new("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+    }, row)
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        tw(track_f, { BackgroundColor3 = state and THEME.Accent or THEME.Off })
+        tw(knob, { Position = state and UDim2.new(1, -17, 0.5, 0) or UDim2.new(0, 3, 0.5, 0) })
+        callback(state)
+    end)
+end
+
+local function add_slider(sec, text, min, max, default, decimals, callback)
+    local mult = 10 ^ decimals
+    local function fmt(v)
+        if decimals == 0 then return tostring(v) end
+        return string.format("%." .. decimals .. "f", v)
+    end
+
+    local row = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 44),
+        BackgroundTransparency = 1,
+        LayoutOrder = nxt(),
+    }, sec)
+    local lbl = text_label(row, text, 13, THEME.Text)
+    lbl.Size = UDim2.new(1, -70, 0, 18)
+
+    local box = new("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, 0),
+        Size = UDim2.fromOffset(56, 20),
+        BackgroundColor3 = THEME.Bg,
+        BorderSizePixel = 0,
+        Text = fmt(default),
+        TextColor3 = THEME.Text,
+        TextSize = 12,
+        Font = Enum.Font.GothamMedium,
+    }, row)
+    corner(box, 5)
+    stroke(box)
+
+    local bar = new("Frame", {
+        Position = UDim2.new(0, 0, 0, 31),
+        Size = UDim2.new(1, 0, 0, 6),
+        BackgroundColor3 = THEME.Off,
+        BorderSizePixel = 0,
+    }, row)
+    corner(bar, 3)
+    local rel0 = (default - min) / (max - min)
+    local fill = new("Frame", {
+        Size = UDim2.new(rel0, 0, 1, 0),
+        BackgroundColor3 = THEME.Accent,
+        BorderSizePixel = 0,
+    }, bar)
+    corner(fill, 3)
+    local knob = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(rel0, 0, 0.5, 0),
+        Size = UDim2.fromOffset(12, 12),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BorderSizePixel = 0,
+    }, bar)
+    corner(knob, 6)
+
+    local hit = new("TextButton", {
+        Position = UDim2.new(0, 0, 0, 22),
+        Size = UDim2.new(1, 0, 0, 24),
+        BackgroundTransparency = 1,
+        Text = "",
+    }, row)
+
+    local dragging = false
+    local function set_from_x(x)
+        local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+        local v = math.floor((min + (max - min) * rel) * mult + 0.5) / mult
+        local r = (v - min) / (max - min)
+        fill.Size = UDim2.new(r, 0, 1, 0)
+        knob.Position = UDim2.new(r, 0, 0.5, 0)
+        box.Text = fmt(v)
+        callback(v)
+    end
+
+    hit.InputBegan:Connect(function(i)
+        if is_press(i) then
+            dragging = true
+            set_from_x(i.Position.X)
+        end
+    end)
+    track(UserInputService.InputChanged:Connect(function(i)
+        if dragging and is_move(i) then set_from_x(i.Position.X) end
+    end))
+    track(UserInputService.InputEnded:Connect(function(i)
+        if is_press(i) then dragging = false end
+    end))
+end
+
+local function add_dropdown(sec, text, values, default_index, callback)
+    local holder = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        LayoutOrder = nxt(),
+    }, sec)
+    new("UIListLayout", {
+        Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder,
+    }, holder)
+
+    local lbl = text_label(holder, text, 13, THEME.Text)
+    lbl.Size = UDim2.new(1, 0, 0, 18)
+    lbl.LayoutOrder = 1
+
+    local head = new("TextButton", {
+        Size = UDim2.new(1, 0, 0, 28),
+        BackgroundColor3 = THEME.Bg,
+        BorderSizePixel = 0,
+        Text = values[default_index],
+        TextColor3 = THEME.Text,
+        TextSize = 12,
+        Font = Enum.Font.GothamMedium,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        AutoButtonColor = false,
+        LayoutOrder = 2,
+    }, holder)
+    corner(head, 6)
+    stroke(head)
+    new("UIPadding", { PaddingLeft = UDim.new(0, 10) }, head)
+    local arrow = text_label(head, "v", 11, THEME.Sub, Enum.Font.GothamBold)
+    arrow.AnchorPoint = Vector2.new(1, 0)
+    arrow.Position = UDim2.new(1, -4, 0, 0)
+    arrow.Size = UDim2.new(0, 16, 1, 0)
+
+    local opts = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = THEME.Bg,
+        BorderSizePixel = 0,
+        Visible = false,
+        LayoutOrder = 3,
+    }, holder)
+    corner(opts, 6)
+    stroke(opts)
+    new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, opts)
+
+    head.MouseButton1Click:Connect(function()
+        opts.Visible = not opts.Visible
+    end)
+
+    for idx, v in ipairs(values) do
+        local o = new("TextButton", {
+            Size = UDim2.new(1, 0, 0, 26),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = v,
+            TextColor3 = THEME.Sub,
+            TextSize = 12,
+            Font = Enum.Font.GothamMedium,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            AutoButtonColor = false,
+            LayoutOrder = idx,
+        }, opts)
+        new("UIPadding", { PaddingLeft = UDim.new(0, 10) }, o)
+        o.MouseEnter:Connect(function() tw(o, { TextColor3 = THEME.Text }) end)
+        o.MouseLeave:Connect(function() tw(o, { TextColor3 = THEME.Sub }) end)
+        o.MouseButton1Click:Connect(function()
+            head.Text = v
+            opts.Visible = false
+            callback(v)
+        end)
+    end
+end
+
+local function add_button(sec, text, callback)
+    local b = new("TextButton", {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundColor3 = THEME.Off,
+        BorderSizePixel = 0,
+        Text = text,
+        TextColor3 = THEME.Text,
+        TextSize = 13,
+        Font = Enum.Font.GothamMedium,
+        AutoButtonColor = false,
+        LayoutOrder = nxt(),
+    }, sec)
+    corner(b, 6)
+    b.MouseEnter:Connect(function() tw(b, { BackgroundColor3 = THEME.Stroke }) end)
+    b.MouseLeave:Connect(function() tw(b, { BackgroundColor3 = THEME.Off }) end)
+    b.MouseButton1Click:Connect(callback)
+end
+
+--// ============================================================
+--// UNLOAD / MINIMIZAR / RESTAURAR
+--// ============================================================
+local function unload()
     for _, c in ipairs(connections) do
         pcall(function() c:Disconnect() end)
     end
@@ -373,246 +843,87 @@ local function full_unload()
         for _, obj in pairs(d) do pcall(function() obj:Remove() end) end
     end
     esp_cache = {}
-
     pcall(function() fov_circle:Remove() end)
-    pcall(function() UserInputService.MouseIconEnabled = true end)
-    pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.Default end)
-    pcall(function() Library:Unload() end)
+
+    pcall(function() gui:Destroy() end)
+    pcall(function() float_gui:Destroy() end)
+    State.Unload = nil
+end
+State.Unload = unload
+
+local float_btn = new("TextButton", {
+    Size = UDim2.fromOffset(96, 32),
+    Position = UDim2.new(0, 20, 0.5, -16),
+    BackgroundColor3 = THEME.Bg,
+    BorderSizePixel = 0,
+    Text = "AIMFUNNY",
+    TextColor3 = THEME.Text,
+    TextSize = 13,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+}, float_gui)
+corner(float_btn, 8)
+stroke(float_btn, THEME.Accent, 1)
+local float_moved = make_draggable(float_btn, float_btn)
+
+local minimized = false
+local function minimize()
+    minimized = true
+    main.Visible = false
+    float_gui.Enabled = true
+end
+local function restore()
+    minimized = false
+    main.Visible = true
+    float_gui.Enabled = false
 end
 
-SettingsGroup:AddButton("Unload", function()
-    full_unload()
+min_btn.MouseButton1Click:Connect(minimize)
+close_btn.MouseButton1Click:Connect(unload)
+float_btn.MouseButton1Click:Connect(function()
+    if not float_moved() then restore() end
 end)
 
-Library:OnUnload(function()
-    for _, c in ipairs(connections) do
-        pcall(function() c:Disconnect() end)
+track(UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        if minimized then restore() else minimize() end
     end
-    for _, d in pairs(esp_cache) do
-        for _, obj in pairs(d) do pcall(function() obj:Remove() end) end
-    end
-    pcall(function() fov_circle:Remove() end)
-end)
-
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-ThemeManager:SetFolder("AIMFUNY")
-SaveManager:SetFolder("AIMFUNY/Configs")
-SaveManager:BuildConfigSection(Tabs.Settings)
-ThemeManager:ApplyToTab(Tabs.Settings)
-
-Library:Notify("AIMFUNY loaded — aimbot & ESP ready.", 5)
+end))
 
 --// ============================================================
---// PATCH — MINIMIZE, X, CURSOR, LIBRARY TOGGLE
+--// PESTANAS
 --// ============================================================
-pcall(function()
+local aim_page = add_tab("Aimbot")
+local vis_page = add_tab("Visuals")
+local set_page = add_tab("Settings")
 
-    local Plr = Players.LocalPlayer
-    local UIS = UserInputService
+-- Aimbot
+local aim = add_section(aim_page, "Aimbot configuration")
+add_toggle(aim, "Enable Aimbot", false, function(v) State.Aimbot.Enabled = v end)
+add_slider(aim, "FOV", 10, 500, 120, 0, function(v) State.Aimbot.FOV = v end)
+add_slider(aim, "Max Distance", 50, 2000, 500, 0, function(v) State.Aimbot.Distance = v end)
+add_toggle(aim, "Show FOV Circle", false, function(v) State.Aimbot.ShowFOV = v end)
+add_slider(aim, "Smoothness", 0.01, 1, 0.15, 2, function(v) State.Aimbot.Smoothness = v end)
+add_toggle(aim, "Mouse Follow", false, function(v) State.Aimbot.MouseFollow = v end)
+add_dropdown(aim, "Target Part", { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, 1,
+    function(v) State.Aimbot.TargetPart = v end)
 
-    --// 1) FRAME PRINCIPAL
-    local main_frame
-    if Window then
-        main_frame = Window.Main or Window.Root or Window.Frame or Window.Holder
-    end
-    if not main_frame then
-        local pg = Plr:FindFirstChildOfClass("PlayerGui")
-        if pg then
-            local count = 0
-            for _, d in ipairs(pg:GetDescendants()) do
-                count = count + 1
-                if count > 5000 then break end
-                if d:IsA("Frame")
-                    and d:FindFirstChild("Topbar")
-                    and d:FindFirstChildOfClass("TextLabel") then
-                    main_frame = d
-                    break
-                end
-            end
-        end
-    end
-    if not main_frame then
-        warn("[AIMFUNY] patch: no se encontró el frame principal")
-        return
-    end
+-- Visuals
+local esp = add_section(vis_page, "ESP functions")
+add_toggle(esp, "Enable ESP", false, function(v) State.ESP.Enabled = v end)
+add_toggle(esp, "Tracers", true, function(v) State.ESP.Tracers = v end)
+add_toggle(esp, "Boxes", true, function(v) State.ESP.Boxes = v end)
+add_toggle(esp, "Names", true, function(v) State.ESP.Names = v end)
+add_toggle(esp, "Health", true, function(v) State.ESP.Health = v end)
+add_toggle(esp, "Distance (studs)", true, function(v) State.ESP.Distance = v end)
+add_slider(esp, "Max Render Distance", 100, 5000, 1000, 0, function(v) State.ESP.MaxDist = v end)
 
-    --// 2) TOPBAR
-    local topbar = main_frame:FindFirstChild("Topbar")
-        or main_frame:FindFirstChild("TitleBar")
-        or main_frame:FindFirstChild("Titlebar")
+-- Settings
+local menu = add_section(set_page, "Menu")
+local hint = text_label(menu, "Mostrar / ocultar: RightShift", 12, THEME.Sub)
+hint.Size = UDim2.new(1, 0, 0, 18)
+hint.LayoutOrder = nxt()
+add_button(menu, "Unload", unload)
 
-    if not topbar then
-        for _, ch in ipairs(main_frame:GetChildren()) do
-            if ch:IsA("Frame") then
-                local tl = ch:FindFirstChildOfClass("TextLabel")
-                if tl and string.find(string.lower(tl.Text), "aimfuny") then
-                    topbar = ch
-                    break
-                end
-            end
-        end
-    end
-    if not topbar then
-        warn("[AIMFUNY] patch: no se encontró la topbar")
-        return
-    end
-
-    --// 3) SCREENGUI QUE CONTIENE EL PANEL
-    local lib_screengui = main_frame
-    while lib_screengui and lib_screengui.Parent and not lib_screengui:IsA("ScreenGui") do
-        lib_screengui = lib_screengui.Parent
-    end
-    if not lib_screengui or not lib_screengui:IsA("ScreenGui") then
-        lib_screengui = nil
-    end
-
-    --// 4) FIX DE CÁMARA
-    main_frame.Active = false
-    topbar.Active = true
-
-    local old_min = topbar:FindFirstChild("AIMFUNY_MinBtn"); if old_min then old_min:Destroy() end
-    local old_x   = topbar:FindFirstChild("AIMFUNY_CloseBtn"); if old_x then old_x:Destroy() end
-
-    local function mk_button(name, text, color, x_offset, width)
-        local b = Instance.new("TextButton")
-        b.Name = name
-        b.AnchorPoint = Vector2.new(1, 0)
-        b.Size = UDim2.new(0, width or 24, 0, 20)
-        b.Position = UDim2.new(1, x_offset, 0, 5)
-        b.BackgroundColor3 = color
-        b.BackgroundTransparency = 0.1
-        b.BorderSizePixel = 0
-        b.Text = text
-        b.TextColor3 = Color3.fromRGB(235, 235, 235)
-        b.TextSize = 16
-        b.Font = Enum.Font.GothamBold
-        b.ZIndex = 10
-        b.Parent = topbar
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, 4)
-        c.Parent = b
-        return b
-    end
-
-    local close_btn = mk_button("AIMFUNY_CloseBtn", "X", Color3.fromRGB(120, 30, 30), -6, 24)
-    local min_btn   = mk_button("AIMFUNY_MinBtn",   "-", Color3.fromRGB(38, 38, 38),   -34, 24)
-
-    --// 5) CONTENEDOR DEL BOTÓN FLOTANTE
-    local gui_parent = lib_screengui and lib_screengui.Parent
-        or (gethui and gethui())
-        or Plr:FindFirstChildOfClass("PlayerGui")
-
-    if not gui_parent then
-        warn("[AIMFUNY] patch: no hay contenedor para el botón flotante")
-        return
-    end
-
-    local old_float = gui_parent:FindFirstChild("AIMFUNY_Float")
-    if old_float then old_float:Destroy() end
-
-    local float_gui = Instance.new("ScreenGui")
-    float_gui.Name = "AIMFUNY_Float"
-    float_gui.ResetOnSpawn = false
-    float_gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    float_gui.IgnoreGuiInset = true
-    float_gui.DisplayOrder = 2000
-    float_gui.Enabled = false
-    float_gui.Parent = gui_parent
-
-    local float_btn = Instance.new("TextButton")
-    float_btn.Name = "ReopenBtn"
-    float_btn.Size = UDim2.new(0, 92, 0, 32)
-    float_btn.Position = UDim2.new(0, 20, 0.5, -16)
-    float_btn.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
-    float_btn.BackgroundTransparency = 0.05
-    float_btn.BorderSizePixel = 0
-    float_btn.Text = "AIMFUNY"
-    float_btn.TextColor3 = Color3.fromRGB(240, 240, 240)
-    float_btn.TextSize = 14
-    float_btn.Font = Enum.Font.GothamBold
-    float_btn.Active = true
-    float_btn.Draggable = true
-    float_btn.Parent = float_gui
-
-    local fcorner = Instance.new("UICorner")
-    fcorner.CornerRadius = UDim.new(0, 6)
-    fcorner.Parent = float_btn
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(255, 80, 80)
-    stroke.Thickness = 1
-    stroke.Parent = float_btn
-
-    --// 6) ESTADO
-    local original_size = main_frame.Size
-    local minimized = false
-
-    local function minimize()
-        minimized = true
-
-        -- soltar el estado de UI de Linoria: esto es lo que libera el mouse real
-        if Library and Library.Toggled then
-            pcall(function() Library:Toggle() end)
-        end
-
-        main_frame.Visible = false
-        if lib_screengui then lib_screengui.Enabled = false end
-        float_gui.Enabled = true
-
-        -- devolver el control del cursor al sistema/juego
-        pcall(function() UIS.MouseIconEnabled = true end)
-        pcall(function() UIS.MouseBehavior = Enum.MouseBehavior.Default end)
-    end
-
-    local function restore()
-        minimized = false
-
-        if lib_screengui then lib_screengui.Enabled = true end
-        main_frame.Visible = true
-        main_frame.Size = original_size
-        float_gui.Enabled = false
-
-        -- reactivar el estado de UI de Linoria si estaba apagado
-        if Library and not Library.Toggled then
-            pcall(function() Library:Toggle() end)
-        end
-    end
-
-    local function close_everything()
-        minimized = true
-        main_frame.Visible = false
-        float_gui.Enabled = false
-
-        for _, c in ipairs(connections) do
-            pcall(function() c:Disconnect() end)
-        end
-        connections = {}
-
-        for _, d in pairs(esp_cache) do
-            for _, obj in pairs(d) do pcall(function() obj:Remove() end) end
-        end
-        esp_cache = {}
-        pcall(function() fov_circle:Remove() end)
-
-        pcall(function() float_gui:Destroy() end)
-        pcall(function() UIS.MouseIconEnabled = true end)
-        pcall(function() UIS.MouseBehavior = Enum.MouseBehavior.Default end)
-        pcall(function() Library:Unload() end)
-    end
-
-    min_btn.MouseButton1Click:Connect(minimize)
-    close_btn.MouseButton1Click:Connect(close_everything)
-    float_btn.MouseButton1Click:Connect(restore)
-
-    --// 7) ATAJO RightShift
-    track(UIS.InputBegan:Connect(function(input, gp)
-        if gp then return end
-        if input.KeyCode == Enum.KeyCode.RightShift then
-            if minimized then restore() else minimize() end
-        end
-    end))
-
-end)
+select_tab("Aimbot")
