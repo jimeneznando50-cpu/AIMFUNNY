@@ -32,9 +32,48 @@ local THEME = {
     Text   = Color3.fromRGB(235, 235, 240),
     Sub    = Color3.fromRGB(140, 140, 150),
     Off    = Color3.fromRGB(52, 52, 60),
+    Warn   = Color3.fromRGB(255, 180, 60),
 }
 
 local MIN_W, MIN_H = 460, 300
+
+--// ============================================================
+--// STEALTH CONSTANTS
+--// ============================================================
+-- Valores maximos seguros cuando Stealth Mode esta ON
+local STEALTH_WALK_MAX = 24
+local STEALTH_JUMP_MAX = 60
+local STEALTH_SPEED_MULT_MAX = 1.5
+
+-- PlaceIds de juegos con anticheat conocido (detecta al ejecutar)
+-- Si estas en uno de estos, aparece notificacion de aviso
+local HIGH_RISK_PLACES = {
+    [286090429]   = "Arsenal",
+    [292439477]   = "Phantom Forces",
+    [3233893875]  = "Bad Business",
+    [5938036553]  = "Frontlines",
+    [1587132586]  = "Typical Colors 2",
+    [142823291]   = "Murder Mystery 2",
+    [1224212277]  = "Mad City",
+    [606849621]   = "Jailbreak",
+    [2788229376]  = "Da Hood",
+    [2753915549]  = "Blox Fruits",
+    [6872265039]  = "BedWars",
+    [8626672718]  = "Sword Fighting Tournament",
+    [6516141723]  = "Doors",
+    [185655149]   = "Welcome to Bloxburg",
+    [920587237]   = "Adopt Me",
+    [537413528]   = "Prison Life",
+    [155615604]   = "Prison Life Classic",
+}
+
+-- Nombres de scripts/objetos que sugieren anticheat client-side
+local AC_HINTS = {
+    "AntiCheat", "Anti-Cheat", "Anti_Cheat",
+    "ACClient", "AC_Client", "Sanity", "SanityCheck",
+    "Guard", "BloxGuard", "Sentinel",
+    "Hyperion", "Byfron", "BattlEye", "EAC", "EasyAntiCheat",
+}
 
 --// ============================================================
 --// TRACKING DE CONEXIONES
@@ -64,16 +103,12 @@ State.Aimbot = {
     Smoothness = 0.15, MouseFollow = false, TargetPart = "Head",
     IgnoreList = {},
     AimKey = "Always",
-    PredictionEnabled = false,
-    PredictionAmount = 0.15,
+    PredictionEnabled = false, PredictionAmount = 0.15,
     VisibleCheck = false,
     AutoFire = false, AutoFireDelay = 100,
     TriggerBot = false, TriggerBotDelay = 50,
     HitboxEnabled = false, HitboxSize = 5, HitboxPart = "Head",
-    -- NUEVO: Aim Assist (alternativa suave al aimbot)
-    AimAssist = false,
-    AimAssistRange = 60,
-    AimAssistStrength = 0.25,
+    AimAssist = false, AimAssistRange = 60, AimAssistStrength = 0.25,
 }
 
 State.Silent = {
@@ -85,12 +120,9 @@ State.Silent = {
 State.ESP = {
     Enabled = false, Tracers = true, Boxes = true, Names = true,
     Health = true, Distance = true, MaxDist = 1000,
-    HideAllies = false,
-    HeadDot = false,
-    Skeleton = false,
-    SkeletonColor = Color3.fromRGB(255, 255, 255),
+    HideAllies = false, HeadDot = false,
+    Skeleton = false, SkeletonColor = Color3.fromRGB(255, 255, 255),
     Chams = false, ChamsColor = "Green", ChamsMode = "Through Walls",
-    -- NUEVO: Flags unifica la info en una sola linea
     Flags = false,
 }
 
@@ -115,11 +147,12 @@ State.Misc = {
     AntiFling = false,
     AutoSaveOnUnload = true,
     PanicKey = "F7",
-    -- NUEVO
     KillNotify = false,
-    TpToCursor = false,
-    TpKey = "T",
+    TpToCursor = false, TpKey = "T",
     Notifications = true,
+    -- NUEVO
+    StealthMode = false,
+    StealthNotified = false,
 }
 
 State.Watermark = {
@@ -421,6 +454,8 @@ local last_shot = 0
 local function fire_mouse_click(delay_override)
     local now = tick() * 1000
     local min_delay = delay_override or State.Aimbot.AutoFireDelay
+    -- En Stealth Mode minimo 150ms entre disparos
+    if State.Misc.StealthMode and min_delay < 150 then min_delay = 150 end
     if now - last_shot < min_delay then return end
     last_shot = now
 
@@ -521,6 +556,8 @@ local hitbox_original = {}
 
 local function expand_hitboxes()
     if not State.Aimbot.HitboxEnabled then return end
+    if State.Misc.StealthMode then return end  -- Stealth bloquea Hitbox
+
     local size = State.Aimbot.HitboxSize
     local part_name = State.Aimbot.HitboxPart
 
@@ -604,7 +641,6 @@ local function update_crosshair()
         ch_h.To = center + Vector2.new(size, 0)
         ch_h.Color = color
         ch_h.Visible = true
-
         ch_v.From = center - Vector2.new(0, size)
         ch_v.To = center + Vector2.new(0, size)
         ch_v.Color = color
@@ -635,21 +671,15 @@ local function get_closest_target()
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
         if is_ally(player) then continue end
-
         local char, hum, root = get_character(player)
         if not char then continue end
-
         local part = get_target_part(player, State.Aimbot.TargetPart)
         if not part then continue end
-
         if not is_target_visible(char, part) then continue end
-
         local dist = (root.Position - Camera.CFrame.Position).Magnitude
         if dist > State.Aimbot.Distance then continue end
-
         local screen_pos, on_screen = world_to_screen(part.Position)
         if not on_screen then continue end
-
         local mag = (screen_pos - center).Magnitude
         if mag < shortest then
             shortest = mag
@@ -754,12 +784,10 @@ track(RunService.RenderStepped:Connect(function()
     end
 end))
 
--- NUEVO: AIM ASSIST
--- Solo actua cuando el aimbot clasico esta OFF, para no pelear.
--- Mueve suave el cursor hacia el target cuando el cursor ya esta cerca.
+-- Aim Assist
 track(RunService.RenderStepped:Connect(function()
     if not State.Aimbot.AimAssist then return end
-    if State.Aimbot.Enabled then return end  -- no pelear con el aimbot
+    if State.Aimbot.Enabled then return end
 
     local target = get_closest_target()
     if not target then return end
@@ -986,15 +1014,12 @@ track(RunService.RenderStepped:Connect(function()
         local max_hp = math.max(1, math.floor(hum.MaxHealth))
         local hp_color = Color3.fromRGB(255 - (hp / max_hp * 255), hp / max_hp * 255, 0)
 
-        -- NUEVO: Flags reemplaza el formato si esta ON
         if State.ESP.Flags then
             local team = get_team_name(player)
             d.name.Text = string.format("%s  [%d HP | %dm | %s]",
                 player.Name, hp, math.floor(dist), team)
             d.name.Position = head_pos - Vector2.new(0, 20)
             d.name.Visible = State.ESP.Names or State.ESP.Health or State.ESP.Distance
-
-            -- ocultar los textos individuales si flags esta ON
             d.health.Visible = false
             d.dist.Visible = false
         else
@@ -1062,7 +1087,6 @@ track(RunService.RenderStepped:Connect(function()
 
     for player, d in pairs(esp_cache) do
         if not d.chams then continue end
-
         local skip = false
         if State.ESP.HideAllies and is_ally(player) then skip = true end
 
@@ -1072,7 +1096,6 @@ track(RunService.RenderStepped:Connect(function()
             d.chams.Enabled = false
             continue
         end
-
         if skip then
             d.chams.Enabled = false
             continue
@@ -1088,10 +1111,8 @@ track(RunService.RenderStepped:Connect(function()
 end))
 
 --// ============================================================
---// KILL NOTIFY (NUEVO)
+--// KILL NOTIFY
 --// ============================================================
--- Se engancha al Died de cada Humanoid de cada player.
--- Detecta si el asesino fue LocalPlayer via ObjectValue "creator".
 local function hook_kill_notify(player)
     local char = player.Character
     if not char then return end
@@ -1103,14 +1124,12 @@ local function hook_kill_notify(player)
         if player == LocalPlayer then return end
         if is_ally(player) then return end
 
-        -- Chequear creator
         local creator = hum:FindFirstChild("creator")
         local is_my_kill = false
         if creator and creator:IsA("ObjectValue") and creator.Value == LocalPlayer then
             is_my_kill = true
         end
 
-        -- distancia desde el asesinato
         local my_char = LocalPlayer.Character
         local my_root = my_char and my_char:FindFirstChild("HumanoidRootPart")
         local their_root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
@@ -1122,7 +1141,6 @@ local function hook_kill_notify(player)
         if is_my_kill then
             notify("KILL", string.format("%s  (%s)", player.Name, dist_str), THEME.Accent)
         else
-            -- muerte de alguien mas, notif mas sutil
             notify("ELIMINATED", string.format("%s  (%s)", player.Name, dist_str), THEME.Sub)
         end
     end))
@@ -1176,7 +1194,7 @@ local function start_fly()
 end
 
 track(RunService.RenderStepped:Connect(function()
-    if State.Player.Fly then
+    if State.Player.Fly and not State.Misc.StealthMode then
         local char = LocalPlayer.Character
         local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
         if root then
@@ -1204,7 +1222,7 @@ track(RunService.RenderStepped:Connect(function()
         if fly_bv then stop_fly() end
     end
 
-    if State.Player.Noclip then
+    if State.Player.Noclip and not State.Misc.StealthMode then
         local char = LocalPlayer.Character
         if char then
             for _, p in ipairs(char:GetDescendants()) do
@@ -1215,7 +1233,7 @@ track(RunService.RenderStepped:Connect(function()
         end
     end
 
-    if State.Player.SpeedBoost then
+    if State.Player.SpeedBoost and not State.Misc.StealthMode then
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if hum then
@@ -1247,6 +1265,112 @@ end))
 track(LocalPlayer.CharacterAdded:Connect(function()
     stop_fly()
 end))
+
+--// ============================================================
+--// STEALTH MODE — NUEVO
+--// ============================================================
+-- Detecta si el juego actual es de "alto riesgo" (anticheat conocido).
+local function detect_high_risk_game()
+    -- 1) Chequeo por PlaceId contra la lista
+    local place_hit = HIGH_RISK_PLACES[game.PlaceId]
+    if place_hit then return place_hit end
+
+    -- 2) Chequeo por nombre de scripts conocidos en PlayerScripts y CoreGui
+    local roots_to_scan = {}
+    pcall(function() table.insert(roots_to_scan, LocalPlayer:FindFirstChild("PlayerScripts")) end)
+    pcall(function() table.insert(roots_to_scan, LocalPlayer:FindFirstChild("PlayerGui")) end)
+    pcall(function()
+        local pg = game:GetService("CoreGui")
+        if pg then table.insert(roots_to_scan, pg) end
+    end)
+
+    for _, root in ipairs(roots_to_scan) do
+        if not root then continue end
+        for _, hint in ipairs(AC_HINTS) do
+            local found = pcall(function()
+                return root:FindFirstChild(hint, true)
+            end)
+            if found and root:FindFirstChild(hint, true) then
+                return hint
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Aplica el capeo cuando Stealth esta ON
+local function apply_stealth_caps()
+    if not State.Misc.StealthMode then return end
+
+    -- Capear Walkspeed
+    if State.Player.Walkspeed > STEALTH_WALK_MAX then
+        State.Player.Walkspeed = STEALTH_WALK_MAX
+    end
+
+    -- Capear JumpPower
+    if State.Player.JumpPower > STEALTH_JUMP_MAX then
+        State.Player.JumpPower = STEALTH_JUMP_MAX
+    end
+
+    -- Capear Speed Multiplier
+    if State.Player.SpeedMultiplier > STEALTH_SPEED_MULT_MAX then
+        State.Player.SpeedMultiplier = STEALTH_SPEED_MULT_MAX
+    end
+
+    -- Forzar OFF features peligrosas
+    if State.Player.Fly then State.Player.Fly = false; stop_fly() end
+    if State.Player.Noclip then
+        State.Player.Noclip = false
+        local char = LocalPlayer.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = true end
+            end
+        end
+    end
+    if State.Player.SpeedBoost then State.Player.SpeedBoost = false end
+    if State.Aimbot.HitboxEnabled then
+        State.Aimbot.HitboxEnabled = false
+        reset_hitboxes()
+    end
+
+    -- Aplicar caps activos al Humanoid
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if hum.WalkSpeed > STEALTH_WALK_MAX then
+            hum.WalkSpeed = math.min(State.Player.Walkspeed, STEALTH_WALK_MAX)
+        end
+        if hum.JumpPower > STEALTH_JUMP_MAX then
+            hum.JumpPower = math.min(State.Player.JumpPower, STEALTH_JUMP_MAX)
+        end
+    end
+end
+
+-- Loop de aplicacion
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if State.Misc.StealthMode then
+            apply_stealth_caps()
+        end
+    end
+end)
+
+-- Al iniciar, detectar si el juego es de riesgo y avisar
+do
+    local hit = detect_high_risk_game()
+    if hit then
+        task.delay(2, function()
+            notify(
+                "JUEGO DE RIESGO",
+                "Detectado: " .. tostring(hit) .. " — Activa Stealth Mode",
+                THEME.Warn
+            )
+        end)
+    end
+end
 
 --// ============================================================
 --// ANTI-AFK + AUTO RESPAWN + ANTI-FLING
@@ -1350,8 +1474,9 @@ track(RunService.RenderStepped:Connect(function()
         pcall(function()
             ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
         end)
-        wm_label.Text = string.format("%s  |  %d FPS  |  %dms",
-            State.Watermark.Text, fps_value, ping)
+        local stealth_tag = State.Misc.StealthMode and "  [STEALTH]" or ""
+        wm_label.Text = string.format("%s%s  |  %d FPS  |  %dms",
+            State.Watermark.Text, stealth_tag, fps_value, ping)
     else
         wm_frame.Visible = false
     end
@@ -1470,7 +1595,7 @@ local function idx_of(list, value)
 end
 
 --// ============================================================
---// TP TO CURSOR (NUEVO)
+--// TP TO CURSOR
 --// ============================================================
 local function tp_to_cursor()
     local origin = Camera.CFrame.Position
@@ -1618,7 +1743,7 @@ local title = text_label(titlebar, "AIMFUNNY", 14, THEME.Text, Enum.Font.GothamB
 title.Position = UDim2.new(0, 30, 0, 0)
 title.Size = UDim2.new(0, 120, 1, 0)
 
-local version = text_label(titlebar, "v2.3", 11, THEME.Sub)
+local version = text_label(titlebar, "v2.4", 11, THEME.Sub)
 version.Position = UDim2.new(0, 104, 0, 1)
 version.Size = UDim2.new(0, 40, 1, 0)
 
@@ -2277,7 +2402,6 @@ local PANIC_KEY_MAP = {
     ["Delete"] = Enum.KeyCode.Delete,
 }
 
--- NUEVO: TP key map
 local TP_KEY_MAP = {
     ["T"]     = Enum.KeyCode.T,
     ["G"]     = Enum.KeyCode.G,
@@ -2289,19 +2413,16 @@ local TP_KEY_MAP = {
 
 track(UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    -- menu toggle
     local key = MENU_KEY_MAP[State.Menu.Key]
     if key and input.KeyCode == key then
         if minimized then restore() else minimize() end
         return
     end
-    -- panic key
     local pk = PANIC_KEY_MAP[State.Misc.PanicKey]
     if pk and input.KeyCode == pk then
         if State.Unload then State.Unload() end
         return
     end
-    -- NUEVO: TP to cursor
     if State.Misc.TpToCursor then
         local tk = TP_KEY_MAP[State.Misc.TpKey]
         if tk and input.KeyCode == tk then
@@ -2310,7 +2431,6 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
     end
 end))
 
--- Notify de carga si cargo config
 if loaded_ok and State.Misc.Notifications then
     task.delay(1, function()
         notify("LOADED", "Config cargado correctamente", THEME.Accent)
@@ -2340,7 +2460,6 @@ add_dropdown(aim, "Target Part",
     idx_of({ "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, State.Aimbot.TargetPart),
     function(v) State.Aimbot.TargetPart = v end)
 
--- NUEVO: Aim Assist
 local aa = add_section(aim_page, "Aim Assist")
 add_toggle(aa, "Enable Aim Assist", State.Aimbot.AimAssist, function(v) State.Aimbot.AimAssist = v end)
 add_slider(aa, "Assist Range (px)", 10, 200, State.Aimbot.AimAssistRange, 0, function(v) State.Aimbot.AimAssistRange = v end)
@@ -2465,7 +2584,6 @@ add_toggle(espf, "Hide Allies in ESP", State.ESP.HideAllies, function(v) State.E
 local espx = add_section(vis_page, "ESP Extras")
 add_toggle(espx, "Head Dot", State.ESP.HeadDot, function(v) State.ESP.HeadDot = v end)
 add_toggle(espx, "Skeleton", State.ESP.Skeleton, function(v) State.ESP.Skeleton = v end)
--- NUEVO: Flags toggle
 add_toggle(espx, "Flags (unified info)", State.ESP.Flags, function(v) State.ESP.Flags = v end)
 
 local chams = add_section(vis_page, "Chams")
@@ -2495,21 +2613,23 @@ add_slider(chs, "Crosshair Size", 3, 30, State.Crosshair.Size, 0, function(v) St
 local move = add_section(move_page, "Movement")
 
 local function apply_walkspeed(v)
-    State.Player.Walkspeed = v
+    local cap = State.Misc.StealthMode and math.min(v, STEALTH_WALK_MAX) or v
+    State.Player.Walkspeed = cap
     if not State.Player.SpeedBoost then
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.WalkSpeed = v end
+        if hum then hum.WalkSpeed = cap end
     end
 end
 
 local function apply_jumppower(v)
-    State.Player.JumpPower = v
+    local cap = State.Misc.StealthMode and math.min(v, STEALTH_JUMP_MAX) or v
+    State.Player.JumpPower = cap
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then
         hum.UseJumpPower = true
-        hum.JumpPower = v
+        hum.JumpPower = cap
     end
 end
 
@@ -2582,12 +2702,27 @@ add_toggle(misc, "Anti-AFK", State.Misc.AntiAFK, function(v) State.Misc.AntiAFK 
 add_toggle(misc, "Auto Respawn", State.Misc.AutoRespawn, function(v) State.Misc.AutoRespawn = v end)
 add_toggle(misc, "Anti-Fling", State.Misc.AntiFling, function(v) State.Misc.AntiFling = v end)
 
--- NUEVO: Kill Notify + Notifications toggles
+-- NUEVO: Stealth Mode
+local stealth = add_section(misc_page, "Stealth Mode")
+add_toggle(stealth, "Enable Stealth Mode", State.Misc.StealthMode, function(v)
+    State.Misc.StealthMode = v
+    if v then
+        notify("STEALTH ON", "Movement caped — Fly/Noclip/Hitbox OFF", THEME.Warn)
+        -- Aplicar cap inmediato al prender
+        apply_stealth_caps()
+    else
+        notify("STEALTH OFF", "Caps removidos — cuidado con el anticheat", THEME.Sub)
+    end
+end)
+local st_info = text_label(stealth, "Limita Walkspeed a 24, JumpPower a 60.\nApaga Fly, Noclip, Speed Boost y Hitbox.\nReduce la cadencia del Auto Fire.", 11, THEME.Sub)
+st_info.Size = UDim2.new(1, 0, 0, 44)
+st_info.TextWrapped = true
+st_info.LayoutOrder = nxt()
+
 local misc_notif = add_section(misc_page, "Notify")
 add_toggle(misc_notif, "Kill Notify", State.Misc.KillNotify, function(v) State.Misc.KillNotify = v end)
 add_toggle(misc_notif, "Enable Notifications UI", State.Misc.Notifications, function(v) State.Misc.Notifications = v end)
 
--- NUEVO: TP to Cursor
 local misc_tp = add_section(misc_page, "TP to Cursor")
 add_toggle(misc_tp, "Enable TP to Cursor", State.Misc.TpToCursor, function(v) State.Misc.TpToCursor = v end)
 
@@ -2607,7 +2742,6 @@ add_dropdown(kb, "Panic Key",
     { "F5", "F6", "F7", "F8", "Home", "End", "Delete" },
     idx_of({ "F5", "F6", "F7", "F8", "Home", "End", "Delete" }, State.Misc.PanicKey),
     function(v) State.Misc.PanicKey = v end)
--- NUEVO: TP key dropdown
 add_dropdown(kb, "TP to Cursor Key",
     { "T", "G", "V", "B", "H", "RightControl" },
     idx_of({ "T", "G", "V", "B", "H", "RightControl" }, State.Misc.TpKey),
