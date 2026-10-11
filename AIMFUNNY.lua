@@ -388,7 +388,6 @@ end
 --// ============================================================
 --// HITBOX EXPANDER
 --// ============================================================
--- guarda size original por [part] = Vector3 para restaurar
 local hitbox_original = {}
 
 local function expand_hitboxes()
@@ -407,7 +406,6 @@ local function expand_hitboxes()
                 hitbox_original[part] = part.Size
             end
             part.Size = Vector3.new(size, size, size)
-            -- para que la hitbox no empuje al jugador ni colisione
             pcall(function()
                 part.Massless = true
                 part.CanCollide = false
@@ -428,7 +426,6 @@ local function reset_hitboxes()
     hitbox_original = {}
 end
 
--- re-aplicar sobre nuevos characters
 track(Players.PlayerAdded:Connect(function(player)
     track(player.CharacterAdded:Connect(function()
         task.wait(1)
@@ -574,7 +571,6 @@ track(RunService.RenderStepped:Connect(function()
     end
 end))
 
--- Hitbox loop (re-aplica cada frame por si el juego resetea Size)
 track(RunService.RenderStepped:Connect(function()
     if State.Aimbot.HitboxEnabled then
         expand_hitboxes()
@@ -824,7 +820,6 @@ track(RunService.RenderStepped:Connect(function()
     end
 end))
 
--- Chams loop
 track(RunService.RenderStepped:Connect(function()
     if not State.ESP.Chams then
         for _, d in pairs(esp_cache) do
@@ -977,7 +972,6 @@ if LocalPlayer.Character then
 end
 track(LocalPlayer.CharacterAdded:Connect(hook_auto_respawn))
 
--- Anti-Fling: escanea partes del character y limpia velocidades anormales
 track(RunService.Heartbeat:Connect(function()
     if not State.Misc.AntiFling then return end
     local char = LocalPlayer.Character
@@ -987,7 +981,6 @@ track(RunService.Heartbeat:Connect(function()
             pcall(function()
                 if p.Velocity.Magnitude > 200 then p.Velocity = Vector3.zero end
                 if not p.Massless and p.Name ~= "HumanoidRootPart" then
-                    -- solo las partes no root se vuelven massless para romper el fling
                     p.Massless = true
                 end
             end)
@@ -1144,14 +1137,32 @@ local function load_config()
     return true
 end
 
--- Reset: limpia config en disco + unload (para reiniciar limpio)
 local function reset_config()
     pcall(function()
         if delfile and isfile and isfile(CONFIG_PATH) then
             delfile(CONFIG_PATH)
         end
     end)
-    if unload then unload() end
+    -- desactivar autosave para que unload no reescriba el archivo
+    State.Misc.AutoSaveOnUnload = false
+    if State.Unload then State.Unload() end
+end
+
+-- AUTO-LOAD: carga el config guardado antes de construir la UI
+pcall(load_config)
+
+-- Si Silent Aim estaba ON, reinstalar el hook
+if State.Silent.Enabled then
+    local ok = install_silent_hook()
+    if not ok then State.Silent.Enabled = false end
+end
+
+-- helper para encontrar indice de dropdown por valor
+local function idx_of(list, value)
+    for i, v in ipairs(list) do
+        if v == value then return i end
+    end
+    return 1
 end
 
 --// ============================================================
@@ -1521,6 +1532,10 @@ local function add_slider(sec, text, min, max, default, decimals, callback)
         return string.format("%." .. decimals .. "f", v)
     end
 
+    -- clamp del default por si viene fuera de rango
+    if default < min then default = min end
+    if default > max then default = max end
+
     local row = new("Frame", {
         Size = UDim2.new(1, 0, 0, 44),
         BackgroundTransparency = 1,
@@ -1608,6 +1623,9 @@ local function add_dropdown(sec, text, values, default_index, callback)
     new("UIListLayout", {
         Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder,
     }, holder)
+
+    -- fallback por si el index viene fuera de rango
+    if not values[default_index] then default_index = 1 end
 
     local lbl = text_label(holder, text, 13, THEME.Text)
     lbl.Size = UDim2.new(1, 0, 0, 18)
@@ -1791,7 +1809,6 @@ end
 --// UNLOAD / MINIMIZAR / RESTAURAR
 --// ============================================================
 local function unload()
-    -- NUEVO: auto-save antes de salir
     if State.Misc.AutoSaveOnUnload then
         pcall(save_config)
     end
@@ -1934,7 +1951,7 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 end))
 
 --// ============================================================
---// PESTANAS
+--// PESTANAS  (defaults vienen de State, ya cargado del config)
 --// ============================================================
 local aim_page = add_tab("Aimbot")
 local silent_page = add_tab("Silent")
@@ -1943,50 +1960,55 @@ local move_page = add_tab("Movement")
 local misc_page = add_tab("Misc")
 local set_page = add_tab("Settings")
 
--- Aimbot
+-- === Aimbot ===
 local aim = add_section(aim_page, "Aimbot configuration")
-add_toggle(aim, "Enable Aimbot", false, function(v) State.Aimbot.Enabled = v end)
-add_slider(aim, "FOV", 10, 500, 120, 0, function(v) State.Aimbot.FOV = v end)
-add_slider(aim, "Max Distance", 50, 2000, 500, 0, function(v) State.Aimbot.Distance = v end)
-add_toggle(aim, "Show FOV Circle", false, function(v) State.Aimbot.ShowFOV = v end)
-add_slider(aim, "Smoothness", 0.01, 1, 0.15, 2, function(v) State.Aimbot.Smoothness = v end)
-add_toggle(aim, "Mouse Follow", false, function(v) State.Aimbot.MouseFollow = v end)
-add_dropdown(aim, "Target Part", { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, 1,
+add_toggle(aim, "Enable Aimbot", State.Aimbot.Enabled, function(v) State.Aimbot.Enabled = v end)
+add_slider(aim, "FOV", 10, 500, State.Aimbot.FOV, 0, function(v) State.Aimbot.FOV = v end)
+add_slider(aim, "Max Distance", 50, 2000, State.Aimbot.Distance, 0, function(v) State.Aimbot.Distance = v end)
+add_toggle(aim, "Show FOV Circle", State.Aimbot.ShowFOV, function(v) State.Aimbot.ShowFOV = v end)
+add_slider(aim, "Smoothness", 0.01, 1, State.Aimbot.Smoothness, 2, function(v) State.Aimbot.Smoothness = v end)
+add_toggle(aim, "Mouse Follow", State.Aimbot.MouseFollow, function(v) State.Aimbot.MouseFollow = v end)
+add_dropdown(aim, "Target Part",
+    { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" },
+    idx_of({ "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, State.Aimbot.TargetPart),
     function(v) State.Aimbot.TargetPart = v end)
 
--- NUEVO: FOV Circle color
 local fovc = add_section(aim_page, "FOV Circle")
 add_dropdown(fovc, "FOV Circle Color",
-    { "White", "Green", "Red", "Blue", "Cyan", "Magenta", "Yellow" }, 1,
+    { "White", "Green", "Red", "Blue", "Cyan", "Magenta", "Yellow" },
+    idx_of({ "White", "Green", "Red", "Blue", "Cyan", "Magenta", "Yellow" }, State.Aimbot.FOVColor),
     function(v) State.Aimbot.FOVColor = v end)
 
 local ak = add_section(aim_page, "Aim Key")
-add_dropdown(ak, "Hold Key", { "Always", "RMB", "LMB", "E", "Q", "Shift", "C" }, 1,
+add_dropdown(ak, "Hold Key",
+    { "Always", "RMB", "LMB", "E", "Q", "Shift", "C" },
+    idx_of({ "Always", "RMB", "LMB", "E", "Q", "Shift", "C" }, State.Aimbot.AimKey),
     function(v) State.Aimbot.AimKey = v end)
 
 local pred = add_section(aim_page, "Prediction")
-add_toggle(pred, "Enable Prediction", false, function(v) State.Aimbot.PredictionEnabled = v end)
-add_slider(pred, "Prediction Amount", 0, 0.5, 0.15, 2, function(v) State.Aimbot.PredictionAmount = v end)
+add_toggle(pred, "Enable Prediction", State.Aimbot.PredictionEnabled, function(v) State.Aimbot.PredictionEnabled = v end)
+add_slider(pred, "Prediction Amount", 0, 0.5, State.Aimbot.PredictionAmount, 2, function(v) State.Aimbot.PredictionAmount = v end)
 
 local vis = add_section(aim_page, "Visibility")
-add_toggle(vis, "Visible Check", false, function(v) State.Aimbot.VisibleCheck = v end)
+add_toggle(vis, "Visible Check", State.Aimbot.VisibleCheck, function(v) State.Aimbot.VisibleCheck = v end)
 
 local af = add_section(aim_page, "Auto Fire")
-add_toggle(af, "Enable Auto Fire", false, function(v) State.Aimbot.AutoFire = v end)
-add_slider(af, "Fire Delay (ms)", 10, 500, 100, 0, function(v) State.Aimbot.AutoFireDelay = v end)
+add_toggle(af, "Enable Auto Fire", State.Aimbot.AutoFire, function(v) State.Aimbot.AutoFire = v end)
+add_slider(af, "Fire Delay (ms)", 10, 500, State.Aimbot.AutoFireDelay, 0, function(v) State.Aimbot.AutoFireDelay = v end)
 
 local tb = add_section(aim_page, "Trigger Bot")
-add_toggle(tb, "Enable Trigger Bot", false, function(v) State.Aimbot.TriggerBot = v end)
-add_slider(tb, "Trigger Delay (ms)", 10, 500, 50, 0, function(v) State.Aimbot.TriggerBotDelay = v end)
+add_toggle(tb, "Enable Trigger Bot", State.Aimbot.TriggerBot, function(v) State.Aimbot.TriggerBot = v end)
+add_slider(tb, "Trigger Delay (ms)", 10, 500, State.Aimbot.TriggerBotDelay, 0, function(v) State.Aimbot.TriggerBotDelay = v end)
 
--- NUEVO: Hitbox Expander
 local hb = add_section(aim_page, "Hitbox Expander")
-add_toggle(hb, "Enable Hitbox Expander", false, function(v)
+add_toggle(hb, "Enable Hitbox Expander", State.Aimbot.HitboxEnabled, function(v)
     State.Aimbot.HitboxEnabled = v
     if not v then reset_hitboxes() end
 end)
-add_slider(hb, "Hitbox Size", 1, 20, 5, 1, function(v) State.Aimbot.HitboxSize = v end)
-add_dropdown(hb, "Hitbox Part", { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, 1,
+add_slider(hb, "Hitbox Size", 1, 20, State.Aimbot.HitboxSize, 1, function(v) State.Aimbot.HitboxSize = v end)
+add_dropdown(hb, "Hitbox Part",
+    { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" },
+    idx_of({ "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, State.Aimbot.HitboxPart),
     function(v)
         reset_hitboxes()
         State.Aimbot.HitboxPart = v
@@ -2018,15 +2040,18 @@ wl_display.AutomaticSize = Enum.AutomaticSize.Y
 wl_display.TextWrapped = true
 wl_display.LayoutOrder = nxt()
 
+-- mostrar lista guardada si la hay
+refresh_wl_display()
+
 add_button(wl, "Limpiar lista", function()
     State.Aimbot.IgnoreList = {}
     rebuild_ignore_lower()
     refresh_wl_display()
 end)
 
--- Silent
+-- === Silent ===
 local si = add_section(silent_page, "Silent Aim")
-add_toggle(si, "Enable Silent Aim", false, function(v)
+add_toggle(si, "Enable Silent Aim", State.Silent.Enabled, function(v)
     State.Silent.Enabled = v
     if v then
         local ok = install_silent_hook()
@@ -2037,8 +2062,10 @@ add_toggle(si, "Enable Silent Aim", false, function(v)
         uninstall_silent_hook()
     end
 end)
-add_slider(si, "Hit Chance %", 1, 100, 100, 0, function(v) State.Silent.HitChance = v end)
-add_dropdown(si, "Silent Target Part", { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, 1,
+add_slider(si, "Hit Chance %", 1, 100, State.Silent.HitChance, 0, function(v) State.Silent.HitChance = v end)
+add_dropdown(si, "Silent Target Part",
+    { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" },
+    idx_of({ "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, State.Silent.TargetPart),
     function(v) State.Silent.TargetPart = v end)
 
 local si_info = text_label(silent_page, "Nota: si tu executor no soporta hookmetamethod,\nesta funcion no hara nada. El resto sigue funcionando.",
@@ -2047,32 +2074,35 @@ si_info.Size = UDim2.new(1, 0, 0, 30)
 si_info.TextWrapped = true
 si_info.LayoutOrder = nxt()
 
--- Visuals
+-- === Visuals ===
 local esp = add_section(vis_page, "ESP functions")
-add_toggle(esp, "Enable ESP", false, function(v) State.ESP.Enabled = v end)
-add_toggle(esp, "Tracers", true, function(v) State.ESP.Tracers = v end)
-add_toggle(esp, "Boxes", true, function(v) State.ESP.Boxes = v end)
-add_toggle(esp, "Names", true, function(v) State.ESP.Names = v end)
-add_toggle(esp, "Health", true, function(v) State.ESP.Health = v end)
-add_toggle(esp, "Distance (studs)", true, function(v) State.ESP.Distance = v end)
-add_slider(esp, "Max Render Distance", 100, 5000, 1000, 0, function(v) State.ESP.MaxDist = v end)
+add_toggle(esp, "Enable ESP", State.ESP.Enabled, function(v) State.ESP.Enabled = v end)
+add_toggle(esp, "Tracers", State.ESP.Tracers, function(v) State.ESP.Tracers = v end)
+add_toggle(esp, "Boxes", State.ESP.Boxes, function(v) State.ESP.Boxes = v end)
+add_toggle(esp, "Names", State.ESP.Names, function(v) State.ESP.Names = v end)
+add_toggle(esp, "Health", State.ESP.Health, function(v) State.ESP.Health = v end)
+add_toggle(esp, "Distance (studs)", State.ESP.Distance, function(v) State.ESP.Distance = v end)
+add_slider(esp, "Max Render Distance", 100, 5000, State.ESP.MaxDist, 0, function(v) State.ESP.MaxDist = v end)
 
 local espf = add_section(vis_page, "ESP Filters")
-add_toggle(espf, "Hide Allies in ESP", false, function(v) State.ESP.HideAllies = v end)
+add_toggle(espf, "Hide Allies in ESP", State.ESP.HideAllies, function(v) State.ESP.HideAllies = v end)
 
 local espx = add_section(vis_page, "ESP Extras")
-add_toggle(espx, "Head Dot", false, function(v) State.ESP.HeadDot = v end)
-add_toggle(espx, "Skeleton", false, function(v) State.ESP.Skeleton = v end)
+add_toggle(espx, "Head Dot", State.ESP.HeadDot, function(v) State.ESP.HeadDot = v end)
+add_toggle(espx, "Skeleton", State.ESP.Skeleton, function(v) State.ESP.Skeleton = v end)
 
 local chams = add_section(vis_page, "Chams")
-add_toggle(chams, "Enable Chams", false, function(v) State.ESP.Chams = v end)
+add_toggle(chams, "Enable Chams", State.ESP.Chams, function(v) State.ESP.Chams = v end)
 add_dropdown(chams, "Chams Color",
-    { "Green", "Red", "Blue", "White", "Cyan", "Magenta", "Yellow" }, 1,
+    { "Green", "Red", "Blue", "White", "Cyan", "Magenta", "Yellow" },
+    idx_of({ "Green", "Red", "Blue", "White", "Cyan", "Magenta", "Yellow" }, State.ESP.ChamsColor),
     function(v) State.ESP.ChamsColor = v end)
-add_dropdown(chams, "Chams Mode", { "Through Walls", "Occluded" }, 1,
+add_dropdown(chams, "Chams Mode",
+    { "Through Walls", "Occluded" },
+    idx_of({ "Through Walls", "Occluded" }, State.ESP.ChamsMode),
     function(v) State.ESP.ChamsMode = v end)
 
--- Movement
+-- === Movement ===
 local move = add_section(move_page, "Movement")
 
 local function apply_walkspeed(v)
@@ -2094,8 +2124,8 @@ local function apply_jumppower(v)
     end
 end
 
-add_slider(move, "Walkspeed", 0, 500, 16, 0, apply_walkspeed)
-add_slider(move, "JumpPower", 0, 500, 50, 0, apply_jumppower)
+add_slider(move, "Walkspeed", 0, 500, State.Player.Walkspeed, 0, apply_walkspeed)
+add_slider(move, "JumpPower", 0, 500, State.Player.JumpPower, 0, apply_jumppower)
 
 track(LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid")
@@ -2107,7 +2137,7 @@ track(LocalPlayer.CharacterAdded:Connect(function(char)
 end))
 
 local jmp = add_section(move_page, "Jump")
-add_toggle(jmp, "Infinite Jump", false, function(v) State.Player.InfiniteJump = v end)
+add_toggle(jmp, "Infinite Jump", State.Player.InfiniteJump, function(v) State.Player.InfiniteJump = v end)
 
 track(UserInputService.JumpRequest:Connect(function()
     if not State.Player.InfiniteJump then return end
@@ -2119,14 +2149,14 @@ track(UserInputService.JumpRequest:Connect(function()
 end))
 
 local fly = add_section(move_page, "Fly")
-add_toggle(fly, "Enable Fly", false, function(v)
+add_toggle(fly, "Enable Fly", State.Player.Fly, function(v)
     State.Player.Fly = v
     if not v then stop_fly() end
 end)
-add_slider(fly, "Fly Speed", 10, 300, 50, 0, function(v) State.Player.FlySpeed = v end)
+add_slider(fly, "Fly Speed", 10, 300, State.Player.FlySpeed, 0, function(v) State.Player.FlySpeed = v end)
 
 local nc = add_section(move_page, "Collision")
-add_toggle(nc, "Noclip", false, function(v)
+add_toggle(nc, "Noclip", State.Player.Noclip, function(v)
     State.Player.Noclip = v
     if not v then
         local char = LocalPlayer.Character
@@ -2137,8 +2167,8 @@ add_toggle(nc, "Noclip", false, function(v)
         end
     end
 end)
-add_toggle(nc, "Speed Boost (hold Shift)", false, function(v) State.Player.SpeedBoost = v end)
-add_slider(nc, "Speed Multiplier", 1, 5, 2, 1, function(v) State.Player.SpeedMultiplier = v end)
+add_toggle(nc, "Speed Boost (hold Shift)", State.Player.SpeedBoost, function(v) State.Player.SpeedBoost = v end)
+add_slider(nc, "Speed Multiplier", 1, 5, State.Player.SpeedMultiplier, 1, function(v) State.Player.SpeedMultiplier = v end)
 
 local tp = add_section(move_page, "Teleport")
 add_textbox_action(tp, "Nombre exacto del jugador", "Go", function(name)
@@ -2156,22 +2186,23 @@ add_textbox_action(tp, "Nombre exacto del jugador", "Go", function(name)
     end
 end)
 
--- Misc
+-- === Misc ===
 local misc = add_section(misc_page, "Utility")
-add_toggle(misc, "Anti-AFK", false, function(v) State.Misc.AntiAFK = v end)
-add_toggle(misc, "Auto Respawn", false, function(v) State.Misc.AutoRespawn = v end)
-add_toggle(misc, "Anti-Fling", false, function(v) State.Misc.AntiFling = v end)
+add_toggle(misc, "Anti-AFK", State.Misc.AntiAFK, function(v) State.Misc.AntiAFK = v end)
+add_toggle(misc, "Auto Respawn", State.Misc.AutoRespawn, function(v) State.Misc.AutoRespawn = v end)
+add_toggle(misc, "Anti-Fling", State.Misc.AntiFling, function(v) State.Misc.AntiFling = v end)
 
 local misc_cfg = add_section(misc_page, "Config")
-add_toggle(misc_cfg, "Auto-Save on Unload", true, function(v) State.Misc.AutoSaveOnUnload = v end)
+add_toggle(misc_cfg, "Auto-Save on Unload", State.Misc.AutoSaveOnUnload, function(v) State.Misc.AutoSaveOnUnload = v end)
 
--- Settings
+-- === Settings ===
 local menu = add_section(set_page, "Menu")
 add_button(menu, "Unload", unload)
 
 local kb = add_section(set_page, "Keybinds")
 add_dropdown(kb, "Menu Toggle Key",
-    { "RightShift", "LeftShift", "F1", "F2", "F3", "F4", "P", "Insert" }, 1,
+    { "RightShift", "LeftShift", "F1", "F2", "F3", "F4", "P", "Insert" },
+    idx_of({ "RightShift", "LeftShift", "F1", "F2", "F3", "F4", "P", "Insert" }, State.Menu.Key),
     function(v) State.Menu.Key = v end)
 
 local cfg = add_section(set_page, "Config")
@@ -2186,7 +2217,7 @@ add_button(cfg, "Reset to Default", function()
 end)
 
 local wms = add_section(set_page, "Watermark")
-add_toggle(wms, "Show Watermark", false, function(v) State.Watermark.Enabled = v end)
+add_toggle(wms, "Show Watermark", State.Watermark.Enabled, function(v) State.Watermark.Enabled = v end)
 add_textbox_action(wms, "Texto del watermark", "Set", function(text)
     State.Watermark.Text = text
 end)
