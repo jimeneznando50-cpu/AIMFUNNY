@@ -67,13 +67,13 @@ State.Aimbot = {
     PredictionEnabled = false,
     PredictionAmount = 0.15,
     VisibleCheck = false,
-    AutoFire = false,
-    AutoFireDelay = 100,
-    TriggerBot = false,
-    TriggerBotDelay = 50,
-    HitboxEnabled = false,
-    HitboxSize = 5,
-    HitboxPart = "Head",
+    AutoFire = false, AutoFireDelay = 100,
+    TriggerBot = false, TriggerBotDelay = 50,
+    HitboxEnabled = false, HitboxSize = 5, HitboxPart = "Head",
+    -- NUEVO: Aim Assist (alternativa suave al aimbot)
+    AimAssist = false,
+    AimAssistRange = 60,
+    AimAssistStrength = 0.25,
 }
 
 State.Silent = {
@@ -89,12 +89,11 @@ State.ESP = {
     HeadDot = false,
     Skeleton = false,
     SkeletonColor = Color3.fromRGB(255, 255, 255),
-    Chams = false,
-    ChamsColor = "Green",
-    ChamsMode = "Through Walls",
+    Chams = false, ChamsColor = "Green", ChamsMode = "Through Walls",
+    -- NUEVO: Flags unifica la info en una sola linea
+    Flags = false,
 }
 
--- NUEVO: Crosshair independiente del ESP
 State.Crosshair = {
     Enabled = false,
     Style = "Cross",
@@ -103,15 +102,11 @@ State.Crosshair = {
 }
 
 State.Player = {
-    Walkspeed = 16,
-    JumpPower = 50,
-    InfiniteJump = false,
-    BunnyHop = false,
-    Fly = false,
-    FlySpeed = 50,
+    Walkspeed = 16, JumpPower = 50,
+    InfiniteJump = false, BunnyHop = false,
+    Fly = false, FlySpeed = 50,
     Noclip = false,
-    SpeedBoost = false,
-    SpeedMultiplier = 2,
+    SpeedBoost = false, SpeedMultiplier = 2,
 }
 
 State.Misc = {
@@ -120,6 +115,11 @@ State.Misc = {
     AntiFling = false,
     AutoSaveOnUnload = true,
     PanicKey = "F7",
+    -- NUEVO
+    KillNotify = false,
+    TpToCursor = false,
+    TpKey = "T",
+    Notifications = true,
 }
 
 State.Watermark = {
@@ -173,9 +173,8 @@ fov_circle.Color = FOV_COLORS.White
 fov_circle.Filled = false
 fov_circle.Transparency = 0.7
 
--- NUEVO: Crosshair drawings (siempre creados, visibilidad controlada)
-local ch_h = Drawing_new("Line")     -- barra horizontal
-local ch_v = Drawing_new("Line")     -- barra vertical
+local ch_h = Drawing_new("Line")
+local ch_v = Drawing_new("Line")
 local ch_circle = Drawing_new("Circle")
 local ch_dot = Drawing_new("Circle")
 
@@ -191,6 +190,100 @@ ch_circle.Filled = false
 ch_dot.Filled = true
 
 local esp_cache = {}
+
+--// ============================================================
+--// NOTIFICATIONS UI
+--// ============================================================
+local notify_gui = Instance.new("ScreenGui")
+notify_gui.Name = "AIMFUNNY_Notify"
+notify_gui.ResetOnSpawn = false
+notify_gui.IgnoreGuiInset = true
+notify_gui.DisplayOrder = 1002
+pcall(function() notify_gui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+
+local notify_holder = Instance.new("Frame")
+notify_holder.AnchorPoint = Vector2.new(1, 0)
+notify_holder.Position = UDim2.new(1, -16, 0, 16)
+notify_holder.Size = UDim2.fromOffset(260, 300)
+notify_holder.BackgroundTransparency = 1
+notify_holder.Parent = notify_gui
+local notify_layout = Instance.new("UIListLayout")
+notify_layout.SortOrder = Enum.SortOrder.LayoutOrder
+notify_layout.Padding = UDim.new(0, 6)
+notify_layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+notify_layout.Parent = notify_holder
+
+local notify_order = 0
+local function notify(title, body, accent)
+    if not State.Misc.Notifications then return end
+    accent = accent or THEME.Accent
+
+    notify_order += 1
+
+    local toast = Instance.new("Frame")
+    toast.Size = UDim2.fromOffset(250, 48)
+    toast.BackgroundColor3 = THEME.Bg
+    toast.BackgroundTransparency = 1
+    toast.BorderSizePixel = 0
+    toast.LayoutOrder = notify_order
+    toast.Position = UDim2.fromOffset(300, 0)
+    toast.Parent = notify_holder
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = toast
+
+    local s = Instance.new("UIStroke")
+    s.Color = accent
+    s.Thickness = 1
+    s.Transparency = 1
+    s.Parent = toast
+
+    local title_l = Instance.new("TextLabel")
+    title_l.Size = UDim2.new(1, -12, 0, 18)
+    title_l.Position = UDim2.new(0, 8, 0, 6)
+    title_l.BackgroundTransparency = 1
+    title_l.Text = title
+    title_l.TextColor3 = accent
+    title_l.TextSize = 12
+    title_l.Font = Enum.Font.GothamBold
+    title_l.TextXAlignment = Enum.TextXAlignment.Left
+    title_l.TextTransparency = 1
+    title_l.Parent = toast
+
+    local body_l = Instance.new("TextLabel")
+    body_l.Size = UDim2.new(1, -12, 0, 16)
+    body_l.Position = UDim2.new(0, 8, 0, 24)
+    body_l.BackgroundTransparency = 1
+    body_l.Text = body
+    body_l.TextColor3 = THEME.Text
+    body_l.TextSize = 11
+    body_l.Font = Enum.Font.GothamMedium
+    body_l.TextXAlignment = Enum.TextXAlignment.Left
+    body_l.TextTransparency = 1
+    body_l.Parent = toast
+
+    TweenService:Create(toast, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 0.15,
+        Position = UDim2.fromOffset(0, 0),
+    }):Play()
+    TweenService:Create(s, TweenInfo.new(0.25), { Transparency = 0 }):Play()
+    TweenService:Create(title_l, TweenInfo.new(0.25), { TextTransparency = 0 }):Play()
+    TweenService:Create(body_l, TweenInfo.new(0.25), { TextTransparency = 0 }):Play()
+
+    task.delay(4, function()
+        if not toast or not toast.Parent then return end
+        TweenService:Create(toast, TweenInfo.new(0.3), {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(300, 0),
+        }):Play()
+        TweenService:Create(s, TweenInfo.new(0.3), { Transparency = 1 }):Play()
+        TweenService:Create(title_l, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+        TweenService:Create(body_l, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+        task.wait(0.35)
+        pcall(function() toast:Destroy() end)
+    end)
+end
 
 --// ============================================================
 --// UTILIDADES
@@ -354,7 +447,6 @@ end
 --// ============================================================
 local silent_original = nil
 local silent_hooked = false
-
 local get_closest_target_silent = nil
 
 local function install_silent_hook()
@@ -429,7 +521,6 @@ local hitbox_original = {}
 
 local function expand_hitboxes()
     if not State.Aimbot.HitboxEnabled then return end
-
     local size = State.Aimbot.HitboxSize
     local part_name = State.Aimbot.HitboxPart
 
@@ -663,6 +754,31 @@ track(RunService.RenderStepped:Connect(function()
     end
 end))
 
+-- NUEVO: AIM ASSIST
+-- Solo actua cuando el aimbot clasico esta OFF, para no pelear.
+-- Mueve suave el cursor hacia el target cuando el cursor ya esta cerca.
+track(RunService.RenderStepped:Connect(function()
+    if not State.Aimbot.AimAssist then return end
+    if State.Aimbot.Enabled then return end  -- no pelear con el aimbot
+
+    local target = get_closest_target()
+    if not target then return end
+
+    local part = get_target_part(target, State.Aimbot.TargetPart)
+    if not part then return end
+
+    local mouse_pos = UserInputService:GetMouseLocation()
+    local screen_pos, on_screen = world_to_screen(part.Position)
+    if not on_screen then return end
+
+    local delta = screen_pos - mouse_pos
+    local dist = delta.Magnitude
+    if dist > State.Aimbot.AimAssistRange then return end
+
+    local move = delta * State.Aimbot.AimAssistStrength * 0.15
+    mousemoverel(move.X, move.Y)
+end))
+
 --// ============================================================
 --// ESP
 --// ============================================================
@@ -681,6 +797,16 @@ local SKELETON_BONES_R6 = {
     {"Torso", "Left Leg"}, {"Left Leg", "Left Foot"},
     {"Torso", "Right Leg"}, {"Right Leg", "Right Foot"},
 }
+
+local function get_team_name(player)
+    if player.Team then return player.Team.Name end
+    if player.TeamColor then
+        local color = tostring(player.TeamColor)
+        color = color:gsub("Enum.TeamColor.", "")
+        return color
+    end
+    return "None"
+end
 
 local function create_esp(player)
     if esp_cache[player] then return end
@@ -856,20 +982,35 @@ track(RunService.RenderStepped:Connect(function()
         d.tracer.To = head_pos
         d.tracer.Visible = State.ESP.Tracers
 
-        d.name.Text = player.Name
-        d.name.Position = head_pos - Vector2.new(0, 20)
-        d.name.Visible = State.ESP.Names
-
         local hp = math.floor(hum.Health)
         local max_hp = math.max(1, math.floor(hum.MaxHealth))
-        d.health.Text = "HP: " .. hp .. "/" .. max_hp
-        d.health.Position = head_pos + Vector2.new(0, 5)
-        d.health.Color = Color3.fromRGB(255 - (hp / max_hp * 255), hp / max_hp * 255, 0)
-        d.health.Visible = State.ESP.Health
+        local hp_color = Color3.fromRGB(255 - (hp / max_hp * 255), hp / max_hp * 255, 0)
 
-        d.dist.Text = math.floor(dist) .. " studs"
-        d.dist.Position = head_pos + Vector2.new(0, 20)
-        d.dist.Visible = State.ESP.Distance
+        -- NUEVO: Flags reemplaza el formato si esta ON
+        if State.ESP.Flags then
+            local team = get_team_name(player)
+            d.name.Text = string.format("%s  [%d HP | %dm | %s]",
+                player.Name, hp, math.floor(dist), team)
+            d.name.Position = head_pos - Vector2.new(0, 20)
+            d.name.Visible = State.ESP.Names or State.ESP.Health or State.ESP.Distance
+
+            -- ocultar los textos individuales si flags esta ON
+            d.health.Visible = false
+            d.dist.Visible = false
+        else
+            d.name.Text = player.Name
+            d.name.Position = head_pos - Vector2.new(0, 20)
+            d.name.Visible = State.ESP.Names
+
+            d.health.Text = "HP: " .. hp .. "/" .. max_hp
+            d.health.Position = head_pos + Vector2.new(0, 5)
+            d.health.Color = hp_color
+            d.health.Visible = State.ESP.Health
+
+            d.dist.Text = math.floor(dist) .. " studs"
+            d.dist.Position = head_pos + Vector2.new(0, 20)
+            d.dist.Visible = State.ESP.Distance
+        end
 
         d.head_dot.Position = head_pos
         d.head_dot.Visible = State.ESP.HeadDot
@@ -945,6 +1086,70 @@ track(RunService.RenderStepped:Connect(function()
         end)
     end
 end))
+
+--// ============================================================
+--// KILL NOTIFY (NUEVO)
+--// ============================================================
+-- Se engancha al Died de cada Humanoid de cada player.
+-- Detecta si el asesino fue LocalPlayer via ObjectValue "creator".
+local function hook_kill_notify(player)
+    local char = player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    track(hum.Died:Connect(function()
+        if not State.Misc.KillNotify then return end
+        if player == LocalPlayer then return end
+        if is_ally(player) then return end
+
+        -- Chequear creator
+        local creator = hum:FindFirstChild("creator")
+        local is_my_kill = false
+        if creator and creator:IsA("ObjectValue") and creator.Value == LocalPlayer then
+            is_my_kill = true
+        end
+
+        -- distancia desde el asesinato
+        local my_char = LocalPlayer.Character
+        local my_root = my_char and my_char:FindFirstChild("HumanoidRootPart")
+        local their_root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+        local dist_str = "?"
+        if my_root and their_root then
+            dist_str = math.floor((my_root.Position - their_root.Position).Magnitude) .. "m"
+        end
+
+        if is_my_kill then
+            notify("KILL", string.format("%s  (%s)", player.Name, dist_str), THEME.Accent)
+        else
+            -- muerte de alguien mas, notif mas sutil
+            notify("ELIMINATED", string.format("%s  (%s)", player.Name, dist_str), THEME.Sub)
+        end
+    end))
+end
+
+track(Players.PlayerAdded:Connect(function(player)
+    if player == LocalPlayer then return end
+    track(player.CharacterAdded:Connect(function()
+        task.wait(1)
+        hook_kill_notify(player)
+    end))
+    if player.Character then
+        task.spawn(hook_kill_notify, player)
+    end
+end))
+
+for _, p in ipairs(Players:GetPlayers()) do
+    if p ~= LocalPlayer then
+        track(p.CharacterAdded:Connect(function()
+            task.wait(1)
+            hook_kill_notify(p)
+        end))
+        if p.Character then
+            task.spawn(hook_kill_notify, p)
+        end
+    end
+end
 
 --// ============================================================
 --// FLY + NOCLIP + SPEED BOOST + BUNNY HOP
@@ -1023,7 +1228,6 @@ track(RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- NUEVO: Bunny Hop
     if State.Player.BunnyHop and not State.Player.Fly then
         if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
             local char = LocalPlayer.Character
@@ -1251,7 +1455,7 @@ local function reset_config()
 end
 
 -- AUTO-LOAD
-pcall(load_config)
+local loaded_ok = pcall(load_config)
 
 if State.Silent.Enabled then
     local ok = install_silent_hook()
@@ -1263,6 +1467,24 @@ local function idx_of(list, value)
         if v == value then return i end
     end
     return 1
+end
+
+--// ============================================================
+--// TP TO CURSOR (NUEVO)
+--// ============================================================
+local function tp_to_cursor()
+    local origin = Camera.CFrame.Position
+    local dir = Camera.CFrame.LookVector * 5000
+    ray_params.FilterDescendantsInstances = { LocalPlayer.Character, Camera }
+    local result = workspace:Raycast(origin, dir, ray_params)
+    if not result then return false end
+
+    local my_char = LocalPlayer.Character
+    local my_root = my_char and (my_char:FindFirstChild("HumanoidRootPart") or my_char.PrimaryPart)
+    if not my_root then return false end
+
+    my_root.CFrame = CFrame.new(result.Position + Vector3.new(0, 3, 0))
+    return true
 end
 
 --// ============================================================
@@ -1396,7 +1618,7 @@ local title = text_label(titlebar, "AIMFUNNY", 14, THEME.Text, Enum.Font.GothamB
 title.Position = UDim2.new(0, 30, 0, 0)
 title.Size = UDim2.new(0, 120, 1, 0)
 
-local version = text_label(titlebar, "v2.2", 11, THEME.Sub)
+local version = text_label(titlebar, "v2.3", 11, THEME.Sub)
 version.Position = UDim2.new(0, 104, 0, 1)
 version.Size = UDim2.new(0, 40, 1, 0)
 
@@ -1940,6 +2162,7 @@ local function unload()
     pcall(function() gui:Destroy() end)
     pcall(function() float_gui:Destroy() end)
     pcall(function() wm_gui:Destroy() end)
+    pcall(function() notify_gui:Destroy() end)
     State.Unload = nil
 end
 State.Unload = unload
@@ -2044,7 +2267,6 @@ local MENU_KEY_MAP = {
     ["Insert"]     = Enum.KeyCode.Insert,
 }
 
--- NUEVO: mapa de teclas para panic
 local PANIC_KEY_MAP = {
     ["F5"]     = Enum.KeyCode.F5,
     ["F6"]     = Enum.KeyCode.F6,
@@ -2055,6 +2277,16 @@ local PANIC_KEY_MAP = {
     ["Delete"] = Enum.KeyCode.Delete,
 }
 
+-- NUEVO: TP key map
+local TP_KEY_MAP = {
+    ["T"]     = Enum.KeyCode.T,
+    ["G"]     = Enum.KeyCode.G,
+    ["V"]     = Enum.KeyCode.V,
+    ["B"]     = Enum.KeyCode.B,
+    ["H"]     = Enum.KeyCode.H,
+    ["RightControl"] = Enum.KeyCode.RightControl,
+}
+
 track(UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     -- menu toggle
@@ -2063,12 +2295,27 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
         if minimized then restore() else minimize() end
         return
     end
-    -- NUEVO: panic key
+    -- panic key
     local pk = PANIC_KEY_MAP[State.Misc.PanicKey]
     if pk and input.KeyCode == pk then
         if State.Unload then State.Unload() end
+        return
+    end
+    -- NUEVO: TP to cursor
+    if State.Misc.TpToCursor then
+        local tk = TP_KEY_MAP[State.Misc.TpKey]
+        if tk and input.KeyCode == tk then
+            pcall(tp_to_cursor)
+        end
     end
 end))
+
+-- Notify de carga si cargo config
+if loaded_ok and State.Misc.Notifications then
+    task.delay(1, function()
+        notify("LOADED", "Config cargado correctamente", THEME.Accent)
+    end)
+end
 
 --// ============================================================
 --// PESTANAS
@@ -2092,6 +2339,15 @@ add_dropdown(aim, "Target Part",
     { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" },
     idx_of({ "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, State.Aimbot.TargetPart),
     function(v) State.Aimbot.TargetPart = v end)
+
+-- NUEVO: Aim Assist
+local aa = add_section(aim_page, "Aim Assist")
+add_toggle(aa, "Enable Aim Assist", State.Aimbot.AimAssist, function(v) State.Aimbot.AimAssist = v end)
+add_slider(aa, "Assist Range (px)", 10, 200, State.Aimbot.AimAssistRange, 0, function(v) State.Aimbot.AimAssistRange = v end)
+add_slider(aa, "Assist Strength", 0.05, 1, State.Aimbot.AimAssistStrength, 2, function(v) State.Aimbot.AimAssistStrength = v end)
+local aa_info = text_label(aim_page, "Aim Assist solo actua cuando el aimbot clasico esta OFF.", 11, THEME.Sub)
+aa_info.Size = UDim2.new(1, 0, 0, 14)
+aa_info.LayoutOrder = nxt()
 
 local fovc = add_section(aim_page, "FOV Circle")
 add_dropdown(fovc, "FOV Circle Color",
@@ -2209,6 +2465,8 @@ add_toggle(espf, "Hide Allies in ESP", State.ESP.HideAllies, function(v) State.E
 local espx = add_section(vis_page, "ESP Extras")
 add_toggle(espx, "Head Dot", State.ESP.HeadDot, function(v) State.ESP.HeadDot = v end)
 add_toggle(espx, "Skeleton", State.ESP.Skeleton, function(v) State.ESP.Skeleton = v end)
+-- NUEVO: Flags toggle
+add_toggle(espx, "Flags (unified info)", State.ESP.Flags, function(v) State.ESP.Flags = v end)
 
 local chams = add_section(vis_page, "Chams")
 add_toggle(chams, "Enable Chams", State.ESP.Chams, function(v) State.ESP.Chams = v end)
@@ -2221,7 +2479,6 @@ add_dropdown(chams, "Chams Mode",
     idx_of({ "Through Walls", "Occluded" }, State.ESP.ChamsMode),
     function(v) State.ESP.ChamsMode = v end)
 
--- NUEVO: Crosshair section
 local chs = add_section(vis_page, "Crosshair")
 add_toggle(chs, "Enable Crosshair", State.Crosshair.Enabled, function(v) State.Crosshair.Enabled = v end)
 add_dropdown(chs, "Crosshair Style",
@@ -2270,7 +2527,6 @@ end))
 
 local jmp = add_section(move_page, "Jump")
 add_toggle(jmp, "Infinite Jump", State.Player.InfiniteJump, function(v) State.Player.InfiniteJump = v end)
--- NUEVO: Bunny Hop toggle
 add_toggle(jmp, "Bunny Hop (hold Space)", State.Player.BunnyHop, function(v) State.Player.BunnyHop = v end)
 
 track(UserInputService.JumpRequest:Connect(function()
@@ -2326,6 +2582,15 @@ add_toggle(misc, "Anti-AFK", State.Misc.AntiAFK, function(v) State.Misc.AntiAFK 
 add_toggle(misc, "Auto Respawn", State.Misc.AutoRespawn, function(v) State.Misc.AutoRespawn = v end)
 add_toggle(misc, "Anti-Fling", State.Misc.AntiFling, function(v) State.Misc.AntiFling = v end)
 
+-- NUEVO: Kill Notify + Notifications toggles
+local misc_notif = add_section(misc_page, "Notify")
+add_toggle(misc_notif, "Kill Notify", State.Misc.KillNotify, function(v) State.Misc.KillNotify = v end)
+add_toggle(misc_notif, "Enable Notifications UI", State.Misc.Notifications, function(v) State.Misc.Notifications = v end)
+
+-- NUEVO: TP to Cursor
+local misc_tp = add_section(misc_page, "TP to Cursor")
+add_toggle(misc_tp, "Enable TP to Cursor", State.Misc.TpToCursor, function(v) State.Misc.TpToCursor = v end)
+
 local misc_cfg = add_section(misc_page, "Config")
 add_toggle(misc_cfg, "Auto-Save on Unload", State.Misc.AutoSaveOnUnload, function(v) State.Misc.AutoSaveOnUnload = v end)
 
@@ -2338,13 +2603,16 @@ add_dropdown(kb, "Menu Toggle Key",
     { "RightShift", "LeftShift", "F1", "F2", "F3", "F4", "P", "Insert" },
     idx_of({ "RightShift", "LeftShift", "F1", "F2", "F3", "F4", "P", "Insert" }, State.Menu.Key),
     function(v) State.Menu.Key = v end)
--- NUEVO: Panic Key dropdown
 add_dropdown(kb, "Panic Key",
     { "F5", "F6", "F7", "F8", "Home", "End", "Delete" },
     idx_of({ "F5", "F6", "F7", "F8", "Home", "End", "Delete" }, State.Misc.PanicKey),
     function(v) State.Misc.PanicKey = v end)
+-- NUEVO: TP key dropdown
+add_dropdown(kb, "TP to Cursor Key",
+    { "T", "G", "V", "B", "H", "RightControl" },
+    idx_of({ "T", "G", "V", "B", "H", "RightControl" }, State.Misc.TpKey),
+    function(v) State.Misc.TpKey = v end)
 
--- NUEVO: Server section
 local srv = add_section(set_page, "Server")
 add_button(srv, "Rejoin Server", function()
     pcall(function()
@@ -2366,10 +2634,14 @@ end)
 
 local cfg = add_section(set_page, "Config")
 add_button(cfg, "Save Config", function()
-    save_config()
+    if save_config() then
+        notify("SAVED", "Config guardado correctamente")
+    end
 end)
 add_button(cfg, "Load Config", function()
-    load_config()
+    if load_config() then
+        notify("LOADED", "Config cargado correctamente")
+    end
 end)
 add_button(cfg, "Reset to Default", function()
     reset_config()
