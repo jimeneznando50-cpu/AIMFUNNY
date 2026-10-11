@@ -59,11 +59,17 @@ local State = getgenv().AIMFUNY
 State.Aimbot = {
     Enabled = false, FOV = 120, Distance = 500, ShowFOV = false,
     Smoothness = 0.15, MouseFollow = false, TargetPart = "Head",
+    IgnoreList = {},
 }
 
 State.ESP = {
     Enabled = false, Tracers = true, Boxes = true, Names = true,
     Health = true, Distance = true, MaxDist = 1000,
+}
+
+State.Player = {
+    Walkspeed = 16,
+    JumpPower = 50,
 }
 
 --// ============================================================
@@ -86,23 +92,65 @@ local function world_to_screen(pos)
     return Vector2.new(sp.X, sp.Y), on_screen
 end
 
+-- flexible: soporta rigs custom sin HumanoidRootPart estandar
 local function get_character(player)
     local char = player.Character
     if not char then return nil end
+
     local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if hum and root and hum.Health > 0 then
-        return char, hum, root
+    if not hum then return nil end
+    if hum.Health <= 0 then return nil end
+
+    local root = hum.RootPart
+        or char:FindFirstChild("HumanoidRootPart")
+        or char:FindFirstChild("Torso")
+        or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("LowerTorso")
+        or char.PrimaryPart
+
+    if not root then
+        for _, p in ipairs(char:GetChildren()) do
+            if p:IsA("BasePart") then root = p; break end
+        end
+    end
+    if not root then return nil end
+
+    return char, hum, root
+end
+
+-- flexible: cae por nombres comunes y si no, cualquier BasePart
+local function get_target_part(player, part_name)
+    local char = player.Character
+    if not char then return nil end
+
+    local candidates = { part_name, "Head", "HumanoidRootPart", "UpperTorso", "Torso", "LowerTorso" }
+    for _, name in ipairs(candidates) do
+        if name then
+            local p = char:FindFirstChild(name)
+            if p and p:IsA("BasePart") then return p end
+        end
+    end
+
+    for _, p in ipairs(char:GetChildren()) do
+        if p:IsA("BasePart") then return p end
     end
     return nil
 end
 
-local function get_target_part(player, part_name)
-    local char = player.Character
-    if not char then return nil end
-    return char:FindFirstChild(part_name)
-        or char:FindFirstChild("Head")
-        or char:FindFirstChild("HumanoidRootPart")
+--// ============================================================
+--// ALLY WHITELIST
+--// ============================================================
+local ignore_lower = {}
+local function rebuild_ignore_lower()
+    ignore_lower = {}
+    for name in pairs(State.Aimbot.IgnoreList) do
+        ignore_lower[string.lower(name)] = true
+    end
+end
+rebuild_ignore_lower()
+
+local function is_ally(player)
+    return ignore_lower[string.lower(player.Name)] == true
 end
 
 --// ============================================================
@@ -128,6 +176,8 @@ local function get_closest_target()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
+        if is_ally(player) then continue end
+
         local char, hum, root = get_character(player)
         if not char then continue end
 
@@ -253,8 +303,7 @@ track(RunService.RenderStepped:Connect(function()
             continue
         end
 
-        local head = char:FindFirstChild("Head")
-        if not head then continue end
+        local head = get_target_part(player, "Head") or root
         local head_pos, on_screen = world_to_screen(head.Position)
         local root_pos = world_to_screen(root.Position)
 
@@ -277,7 +326,7 @@ track(RunService.RenderStepped:Connect(function()
         d.name.Visible = State.ESP.Names
 
         local hp = math.floor(hum.Health)
-        local max_hp = math.floor(hum.MaxHealth)
+        local max_hp = math.max(1, math.floor(hum.MaxHealth))
         d.health.Text = "HP: " .. hp .. "/" .. max_hp
         d.health.Position = head_pos + Vector2.new(0, 5)
         d.health.Color = Color3.fromRGB(255 - (hp / max_hp * 255), hp / max_hp * 255, 0)
@@ -830,6 +879,59 @@ local function add_button(sec, text, callback)
     b.MouseButton1Click:Connect(callback)
 end
 
+-- textbox con boton "Add" para la whitelist
+local function add_textbox(sec, placeholder, callback)
+    local row = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 32),
+        BackgroundTransparency = 1,
+        LayoutOrder = nxt(),
+    }, sec)
+
+    local box = new("TextBox", {
+        Size = UDim2.new(1, -66, 1, 0),
+        BackgroundColor3 = THEME.Bg,
+        BorderSizePixel = 0,
+        Text = "",
+        PlaceholderText = placeholder or "",
+        PlaceholderColor3 = THEME.Sub,
+        TextColor3 = THEME.Text,
+        TextSize = 12,
+        Font = Enum.Font.GothamMedium,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false,
+    }, row)
+    corner(box, 5)
+    stroke(box)
+    new("UIPadding", { PaddingLeft = UDim.new(0, 8) }, box)
+
+    local btn = new("TextButton", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, 0),
+        Size = UDim2.fromOffset(58, 32),
+        BackgroundColor3 = THEME.Accent,
+        BorderSizePixel = 0,
+        Text = "Add",
+        TextColor3 = Color3.fromRGB(20, 20, 20),
+        TextSize = 12,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+    }, row)
+    corner(btn, 5)
+
+    local function commit()
+        local name = box.Text:gsub("^%s*(.-)%s*$", "%1")
+        if #name > 0 then
+            callback(name)
+            box.Text = ""
+        end
+    end
+
+    btn.MouseButton1Click:Connect(commit)
+    box.FocusLost:Connect(function(enterPressed)
+        if enterPressed then commit() end
+    end)
+end
+
 --// ============================================================
 --// UNLOAD / MINIMIZAR / RESTAURAR
 --// ============================================================
@@ -896,6 +998,7 @@ end))
 --// ============================================================
 local aim_page = add_tab("Aimbot")
 local vis_page = add_tab("Visuals")
+local move_page = add_tab("Movement")
 local set_page = add_tab("Settings")
 
 -- Aimbot
@@ -909,6 +1012,39 @@ add_toggle(aim, "Mouse Follow", false, function(v) State.Aimbot.MouseFollow = v 
 add_dropdown(aim, "Target Part", { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, 1,
     function(v) State.Aimbot.TargetPart = v end)
 
+-- Ally Whitelist
+local wl = add_section(aim_page, "Ally Whitelist")
+local wl_hint = text_label(wl, "Nombres a ignorar por el aimbot", 11, THEME.Sub)
+wl_hint.Size = UDim2.new(1, 0, 0, 14)
+wl_hint.LayoutOrder = nxt()
+
+local wl_display
+local function refresh_wl_display()
+    if not wl_display then return end
+    local names = {}
+    for name in pairs(State.Aimbot.IgnoreList) do table.insert(names, name) end
+    table.sort(names)
+    wl_display.Text = (#names == 0) and "Lista vacia" or table.concat(names, ", ")
+end
+
+add_textbox(wl, "Escribe un nombre y Enter", function(name)
+    State.Aimbot.IgnoreList[name] = true
+    rebuild_ignore_lower()
+    refresh_wl_display()
+end)
+
+wl_display = text_label(wl, "Lista vacia", 12, THEME.Sub)
+wl_display.Size = UDim2.new(1, 0, 0, 0)
+wl_display.AutomaticSize = Enum.AutomaticSize.Y
+wl_display.TextWrapped = true
+wl_display.LayoutOrder = nxt()
+
+add_button(wl, "Limpiar lista", function()
+    State.Aimbot.IgnoreList = {}
+    rebuild_ignore_lower()
+    refresh_wl_display()
+end)
+
 -- Visuals
 local esp = add_section(vis_page, "ESP functions")
 add_toggle(esp, "Enable ESP", false, function(v) State.ESP.Enabled = v end)
@@ -918,6 +1054,36 @@ add_toggle(esp, "Names", true, function(v) State.ESP.Names = v end)
 add_toggle(esp, "Health", true, function(v) State.ESP.Health = v end)
 add_toggle(esp, "Distance (studs)", true, function(v) State.ESP.Distance = v end)
 add_slider(esp, "Max Render Distance", 100, 5000, 1000, 0, function(v) State.ESP.MaxDist = v end)
+
+-- Movement
+local move = add_section(move_page, "Movement")
+
+local function apply_walkspeed(v)
+    State.Player.Walkspeed = v
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.WalkSpeed = v end
+end
+
+local function apply_jumppower(v)
+    State.Player.JumpPower = v
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.UseJumpPower = true
+        hum.JumpPower = v
+    end
+end
+
+add_slider(move, "Walkspeed", 0, 500, 16, 0, apply_walkspeed)
+add_slider(move, "JumpPower", 0, 500, 50, 0, apply_jumppower)
+
+track(LocalPlayer.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.WalkSpeed = State.Player.Walkspeed
+    hum.UseJumpPower = true
+    hum.JumpPower = State.Player.JumpPower
+end))
 
 -- Settings
 local menu = add_section(set_page, "Menu")
