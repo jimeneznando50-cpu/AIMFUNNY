@@ -438,7 +438,7 @@ end
 
 local gui = make_screengui("AIMFUNNY_GUI", 1000)
 local float_gui = make_screengui("AIMFUNNY_Float", 1001)
-float_gui.Enabled = false
+float_gui.Enabled = true   -- boton flotante siempre visible
 
 local main = new("Frame", {
     Name = "Main",
@@ -953,37 +953,97 @@ local function unload()
 end
 State.Unload = unload
 
+--// ============================================================
+--// BOTON FLOTANTE — circular, crosshair, siempre visible
+--// ============================================================
+local FS = 48
 local float_btn = new("TextButton", {
-    Size = UDim2.fromOffset(96, 32),
-    Position = UDim2.new(0, 20, 0.5, -16),
+    Size = UDim2.fromOffset(FS, FS),
+    Position = UDim2.new(0, 20, 0.5, 40),  -- centro del borde izq, un poco mas abajo
     BackgroundColor3 = THEME.Bg,
     BorderSizePixel = 0,
-    Text = "AIMFUNNY",
-    TextColor3 = THEME.Text,
-    TextSize = 13,
-    Font = Enum.Font.GothamBold,
+    Text = "",
     AutoButtonColor = false,
 }, float_gui)
-corner(float_btn, 8)
-stroke(float_btn, THEME.Accent, 1)
+corner(float_btn, FS / 2)
+stroke(float_btn, THEME.Accent, 2)
+
+-- anillo interior blanco
+local ring = new("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    Size = UDim2.fromOffset(28, 28),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+}, float_btn)
+corner(ring, 14)
+new("UIStroke", {
+    Color = Color3.fromRGB(235, 235, 235),
+    Thickness = 2,
+    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+}, ring)
+
+-- cruz blanca (horizontal + vertical)
+new("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    Size = UDim2.fromOffset(34, 2),
+    BackgroundColor3 = Color3.fromRGB(235, 235, 235),
+    BorderSizePixel = 0,
+}, float_btn)
+new("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    Size = UDim2.fromOffset(2, 34),
+    BackgroundColor3 = Color3.fromRGB(235, 235, 235),
+    BorderSizePixel = 0,
+}, float_btn)
+
+-- punto central verde
+local dot = new("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    Size = UDim2.fromOffset(6, 6),
+    BackgroundColor3 = THEME.Accent,
+    BorderSizePixel = 0,
+}, float_btn)
+corner(dot, 3)
+
+-- 4 marcas verdes en los extremos de la cruz
+for _, cfg in ipairs({
+    { UDim2.new(0.5, 0, 0.5, -20), UDim2.fromOffset(4, 8) },  -- top
+    { UDim2.new(0.5, 0, 0.5, 20),  UDim2.fromOffset(4, 8) },  -- bottom
+    { UDim2.new(0.5, -20, 0.5, 0), UDim2.fromOffset(8, 4) },  -- left
+    { UDim2.new(0.5, 20, 0.5, 0),  UDim2.fromOffset(8, 4) },  -- right
+}) do
+    local m = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = cfg[1],
+        Size = cfg[2],
+        BackgroundColor3 = THEME.Accent,
+        BorderSizePixel = 0,
+    }, float_btn)
+    corner(m, 2)
+end
+
 local float_moved = make_draggable(float_btn, float_btn)
 
 local minimized = false
 local function minimize()
     minimized = true
     main.Visible = false
-    float_gui.Enabled = true
 end
 local function restore()
     minimized = false
     main.Visible = true
-    float_gui.Enabled = false
 end
 
 min_btn.MouseButton1Click:Connect(minimize)
 close_btn.MouseButton1Click:Connect(unload)
 float_btn.MouseButton1Click:Connect(function()
-    if not float_moved() then restore() end
+    if not float_moved() then
+        if minimized then restore() else minimize() end
+    end
 end)
 
 track(UserInputService.InputBegan:Connect(function(input, gp)
