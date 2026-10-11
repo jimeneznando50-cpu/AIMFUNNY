@@ -15,6 +15,7 @@ local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
+local TeleportService  = game:GetService("TeleportService")
 local Stats            = game:GetService("Stats")
 local Camera           = workspace.CurrentCamera
 local LocalPlayer      = Players.LocalPlayer
@@ -93,10 +94,19 @@ State.ESP = {
     ChamsMode = "Through Walls",
 }
 
+-- NUEVO: Crosshair independiente del ESP
+State.Crosshair = {
+    Enabled = false,
+    Style = "Cross",
+    Color = "White",
+    Size = 10,
+}
+
 State.Player = {
     Walkspeed = 16,
     JumpPower = 50,
     InfiniteJump = false,
+    BunnyHop = false,
     Fly = false,
     FlySpeed = 50,
     Noclip = false,
@@ -109,6 +119,7 @@ State.Misc = {
     AutoRespawn = false,
     AntiFling = false,
     AutoSaveOnUnload = true,
+    PanicKey = "F7",
 }
 
 State.Watermark = {
@@ -143,6 +154,15 @@ local CHAMS_COLORS = {
     Yellow  = Color3.fromRGB(255, 230, 80),
 }
 
+local CROSSHAIR_COLORS = {
+    White   = Color3.fromRGB(255, 255, 255),
+    Green   = Color3.fromRGB(70, 220, 120),
+    Red     = Color3.fromRGB(255, 70, 70),
+    Cyan    = Color3.fromRGB(80, 220, 255),
+    Magenta = Color3.fromRGB(255, 80, 220),
+    Yellow  = Color3.fromRGB(255, 230, 80),
+}
+
 --// ============================================================
 --// DRAWING OBJECTS
 --// ============================================================
@@ -152,6 +172,23 @@ fov_circle.Thickness = 2
 fov_circle.Color = FOV_COLORS.White
 fov_circle.Filled = false
 fov_circle.Transparency = 0.7
+
+-- NUEVO: Crosshair drawings (siempre creados, visibilidad controlada)
+local ch_h = Drawing_new("Line")     -- barra horizontal
+local ch_v = Drawing_new("Line")     -- barra vertical
+local ch_circle = Drawing_new("Circle")
+local ch_dot = Drawing_new("Circle")
+
+for _, o in ipairs({ ch_h, ch_v, ch_circle, ch_dot }) do
+    o.Visible = false
+    o.Transparency = 0.15
+    o.Thickness = 2
+    o.Color = CROSSHAIR_COLORS.White
+end
+ch_h.Thickness = 1
+ch_v.Thickness = 1
+ch_circle.Filled = false
+ch_dot.Filled = true
 
 local esp_cache = {}
 
@@ -446,6 +483,55 @@ local function update_fov()
         fov_circle.Visible = false
     end
 end
+
+--// ============================================================
+--// CROSSHAIR
+--// ============================================================
+local function hide_crosshair()
+    ch_h.Visible = false
+    ch_v.Visible = false
+    ch_circle.Visible = false
+    ch_dot.Visible = false
+end
+
+local function update_crosshair()
+    if not State.Crosshair.Enabled then
+        hide_crosshair()
+        return
+    end
+
+    local vp = Camera.ViewportSize
+    local center = Vector2.new(vp.X / 2, vp.Y / 2)
+    local color = CROSSHAIR_COLORS[State.Crosshair.Color] or CROSSHAIR_COLORS.White
+    local size = State.Crosshair.Size
+    local style = State.Crosshair.Style
+
+    hide_crosshair()
+
+    if style == "Cross" then
+        ch_h.From = center - Vector2.new(size, 0)
+        ch_h.To = center + Vector2.new(size, 0)
+        ch_h.Color = color
+        ch_h.Visible = true
+
+        ch_v.From = center - Vector2.new(0, size)
+        ch_v.To = center + Vector2.new(0, size)
+        ch_v.Color = color
+        ch_v.Visible = true
+    elseif style == "Circle" then
+        ch_circle.Position = center
+        ch_circle.Radius = size
+        ch_circle.Color = color
+        ch_circle.Visible = true
+    elseif style == "Dot" then
+        ch_dot.Position = center
+        ch_dot.Radius = math.max(2, size / 3)
+        ch_dot.Color = color
+        ch_dot.Visible = true
+    end
+end
+
+track(RunService.RenderStepped:Connect(update_crosshair))
 
 --// ============================================================
 --// AIMBOT
@@ -861,7 +947,7 @@ track(RunService.RenderStepped:Connect(function()
 end))
 
 --// ============================================================
---// FLY + NOCLIP + SPEED BOOST
+--// FLY + NOCLIP + SPEED BOOST + BUNNY HOP
 --// ============================================================
 local fly_bv = nil
 
@@ -933,6 +1019,22 @@ track(RunService.RenderStepped:Connect(function()
                 if hum.WalkSpeed ~= target_speed then hum.WalkSpeed = target_speed end
             else
                 if hum.WalkSpeed ~= State.Player.Walkspeed then hum.WalkSpeed = State.Player.Walkspeed end
+            end
+        end
+    end
+
+    -- NUEVO: Bunny Hop
+    if State.Player.BunnyHop and not State.Player.Fly then
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local state = hum:GetState()
+                if state == Enum.HumanoidStateType.Running
+                   or state == Enum.HumanoidStateType.Landed
+                   or state == Enum.HumanoidStateType.RunningNoPhysics then
+                    hum.Jump = true
+                end
             end
         end
     end
@@ -1103,6 +1205,7 @@ local function save_config()
         Aimbot = State.Aimbot,
         Silent = State.Silent,
         ESP = State.ESP,
+        Crosshair = State.Crosshair,
         Player = State.Player,
         Misc = State.Misc,
         Watermark = State.Watermark,
@@ -1143,21 +1246,18 @@ local function reset_config()
             delfile(CONFIG_PATH)
         end
     end)
-    -- desactivar autosave para que unload no reescriba el archivo
     State.Misc.AutoSaveOnUnload = false
     if State.Unload then State.Unload() end
 end
 
--- AUTO-LOAD: carga el config guardado antes de construir la UI
+-- AUTO-LOAD
 pcall(load_config)
 
--- Si Silent Aim estaba ON, reinstalar el hook
 if State.Silent.Enabled then
     local ok = install_silent_hook()
     if not ok then State.Silent.Enabled = false end
 end
 
--- helper para encontrar indice de dropdown por valor
 local function idx_of(list, value)
     for i, v in ipairs(list) do
         if v == value then return i end
@@ -1296,7 +1396,7 @@ local title = text_label(titlebar, "AIMFUNNY", 14, THEME.Text, Enum.Font.GothamB
 title.Position = UDim2.new(0, 30, 0, 0)
 title.Size = UDim2.new(0, 120, 1, 0)
 
-local version = text_label(titlebar, "v2.1", 11, THEME.Sub)
+local version = text_label(titlebar, "v2.2", 11, THEME.Sub)
 version.Position = UDim2.new(0, 104, 0, 1)
 version.Size = UDim2.new(0, 40, 1, 0)
 
@@ -1532,7 +1632,6 @@ local function add_slider(sec, text, min, max, default, decimals, callback)
         return string.format("%." .. decimals .. "f", v)
     end
 
-    -- clamp del default por si viene fuera de rango
     if default < min then default = min end
     if default > max then default = max end
 
@@ -1624,7 +1723,6 @@ local function add_dropdown(sec, text, values, default_index, callback)
         Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder,
     }, holder)
 
-    -- fallback por si el index viene fuera de rango
     if not values[default_index] then default_index = 1 end
 
     local lbl = text_label(holder, text, 13, THEME.Text)
@@ -1831,6 +1929,10 @@ local function unload()
     end
     esp_cache = {}
     pcall(function() fov_circle:Remove() end)
+    pcall(function() ch_h:Remove() end)
+    pcall(function() ch_v:Remove() end)
+    pcall(function() ch_circle:Remove() end)
+    pcall(function() ch_dot:Remove() end)
     stop_fly()
     reset_hitboxes()
     uninstall_silent_hook()
@@ -1942,16 +2044,34 @@ local MENU_KEY_MAP = {
     ["Insert"]     = Enum.KeyCode.Insert,
 }
 
+-- NUEVO: mapa de teclas para panic
+local PANIC_KEY_MAP = {
+    ["F5"]     = Enum.KeyCode.F5,
+    ["F6"]     = Enum.KeyCode.F6,
+    ["F7"]     = Enum.KeyCode.F7,
+    ["F8"]     = Enum.KeyCode.F8,
+    ["Home"]   = Enum.KeyCode.Home,
+    ["End"]    = Enum.KeyCode.End,
+    ["Delete"] = Enum.KeyCode.Delete,
+}
+
 track(UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
+    -- menu toggle
     local key = MENU_KEY_MAP[State.Menu.Key]
     if key and input.KeyCode == key then
         if minimized then restore() else minimize() end
+        return
+    end
+    -- NUEVO: panic key
+    local pk = PANIC_KEY_MAP[State.Misc.PanicKey]
+    if pk and input.KeyCode == pk then
+        if State.Unload then State.Unload() end
     end
 end))
 
 --// ============================================================
---// PESTANAS  (defaults vienen de State, ya cargado del config)
+--// PESTANAS
 --// ============================================================
 local aim_page = add_tab("Aimbot")
 local silent_page = add_tab("Silent")
@@ -2040,7 +2160,6 @@ wl_display.AutomaticSize = Enum.AutomaticSize.Y
 wl_display.TextWrapped = true
 wl_display.LayoutOrder = nxt()
 
--- mostrar lista guardada si la hay
 refresh_wl_display()
 
 add_button(wl, "Limpiar lista", function()
@@ -2102,6 +2221,19 @@ add_dropdown(chams, "Chams Mode",
     idx_of({ "Through Walls", "Occluded" }, State.ESP.ChamsMode),
     function(v) State.ESP.ChamsMode = v end)
 
+-- NUEVO: Crosshair section
+local chs = add_section(vis_page, "Crosshair")
+add_toggle(chs, "Enable Crosshair", State.Crosshair.Enabled, function(v) State.Crosshair.Enabled = v end)
+add_dropdown(chs, "Crosshair Style",
+    { "Cross", "Circle", "Dot" },
+    idx_of({ "Cross", "Circle", "Dot" }, State.Crosshair.Style),
+    function(v) State.Crosshair.Style = v end)
+add_dropdown(chs, "Crosshair Color",
+    { "White", "Green", "Red", "Cyan", "Magenta", "Yellow" },
+    idx_of({ "White", "Green", "Red", "Cyan", "Magenta", "Yellow" }, State.Crosshair.Color),
+    function(v) State.Crosshair.Color = v end)
+add_slider(chs, "Crosshair Size", 3, 30, State.Crosshair.Size, 0, function(v) State.Crosshair.Size = v end)
+
 -- === Movement ===
 local move = add_section(move_page, "Movement")
 
@@ -2138,6 +2270,8 @@ end))
 
 local jmp = add_section(move_page, "Jump")
 add_toggle(jmp, "Infinite Jump", State.Player.InfiniteJump, function(v) State.Player.InfiniteJump = v end)
+-- NUEVO: Bunny Hop toggle
+add_toggle(jmp, "Bunny Hop (hold Space)", State.Player.BunnyHop, function(v) State.Player.BunnyHop = v end)
 
 track(UserInputService.JumpRequest:Connect(function()
     if not State.Player.InfiniteJump then return end
@@ -2204,6 +2338,31 @@ add_dropdown(kb, "Menu Toggle Key",
     { "RightShift", "LeftShift", "F1", "F2", "F3", "F4", "P", "Insert" },
     idx_of({ "RightShift", "LeftShift", "F1", "F2", "F3", "F4", "P", "Insert" }, State.Menu.Key),
     function(v) State.Menu.Key = v end)
+-- NUEVO: Panic Key dropdown
+add_dropdown(kb, "Panic Key",
+    { "F5", "F6", "F7", "F8", "Home", "End", "Delete" },
+    idx_of({ "F5", "F6", "F7", "F8", "Home", "End", "Delete" }, State.Misc.PanicKey),
+    function(v) State.Misc.PanicKey = v end)
+
+-- NUEVO: Server section
+local srv = add_section(set_page, "Server")
+add_button(srv, "Rejoin Server", function()
+    pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+    end)
+end)
+add_button(srv, "Server Hop", function()
+    pcall(function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end)
+end)
+add_button(srv, "Copy Job ID", function()
+    pcall(function()
+        if setclipboard then
+            setclipboard(game.JobId)
+        end
+    end)
+end)
 
 local cfg = add_section(set_page, "Config")
 add_button(cfg, "Save Config", function()
