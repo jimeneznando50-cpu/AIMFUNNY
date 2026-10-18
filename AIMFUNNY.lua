@@ -40,13 +40,10 @@ local MIN_W, MIN_H = 460, 300
 --// ============================================================
 --// STEALTH CONSTANTS
 --// ============================================================
--- Valores maximos seguros cuando Stealth Mode esta ON
 local STEALTH_WALK_MAX = 24
 local STEALTH_JUMP_MAX = 60
 local STEALTH_SPEED_MULT_MAX = 1.5
 
--- PlaceIds de juegos con anticheat conocido (detecta al ejecutar)
--- Si estas en uno de estos, aparece notificacion de aviso
 local HIGH_RISK_PLACES = {
     [286090429]   = "Arsenal",
     [292439477]   = "Phantom Forces",
@@ -67,7 +64,6 @@ local HIGH_RISK_PLACES = {
     [155615604]   = "Prison Life Classic",
 }
 
--- Nombres de scripts/objetos que sugieren anticheat client-side
 local AC_HINTS = {
     "AntiCheat", "Anti-Cheat", "Anti_Cheat",
     "ACClient", "AC_Client", "Sanity", "SanityCheck",
@@ -150,9 +146,10 @@ State.Misc = {
     KillNotify = false,
     TpToCursor = false, TpKey = "T",
     Notifications = true,
-    -- NUEVO
     StealthMode = false,
     StealthNotified = false,
+    -- NUEVO: filtro automatico de compañeros de equipo
+    IgnoreTeammates = false,
 }
 
 State.Watermark = {
@@ -386,6 +383,64 @@ local function is_ally(player)
 end
 
 --// ============================================================
+--// TEAM FILTER — NUEVO
+--// ============================================================
+local TEAM_ATTRS = { "Team", "TeamId", "TeamName", "Faction", "Side", "TeamColor" }
+
+local function get_team_identity(player)
+    if not player then return nil end
+
+    local team = player.Team
+    if team then return "team:" .. tostring(team.Name) end
+
+    local tc = player.TeamColor
+    if tc and tc ~= Enum.TeamColor.White then
+        return "color:" .. tostring(tc)
+    end
+
+    for _, attr in ipairs(TEAM_ATTRS) do
+        local ok, val = pcall(function() return player:GetAttribute(attr) end)
+        if ok and val ~= nil then
+            return "attr_" .. attr .. ":" .. tostring(val)
+        end
+    end
+
+    for _, name in ipairs(TEAM_ATTRS) do
+        local c = player:FindFirstChild(name)
+        if c and c:IsA("ValueBase") then
+            return "child_" .. name .. ":" .. tostring(c.Value)
+        end
+    end
+
+    local char = player.Character
+    if char then
+        for _, name in ipairs(TEAM_ATTRS) do
+            local c = char:FindFirstChild(name)
+            if c and c:IsA("ValueBase") then
+                return "char_" .. name .. ":" .. tostring(c.Value)
+            end
+        end
+    end
+
+    return nil
+end
+
+local function is_teammate(player)
+    if player == LocalPlayer then return false end
+    local mine = get_team_identity(LocalPlayer)
+    if not mine then return false end
+    local theirs = get_team_identity(player)
+    if not theirs then return false end
+    return mine == theirs
+end
+
+local function should_skip_aim_target(player)
+    if is_ally(player) then return true end
+    if State.Misc.IgnoreTeammates and is_teammate(player) then return true end
+    return false
+end
+
+--// ============================================================
 --// AIM KEY
 --// ============================================================
 local AIM_KEY_MAP = {
@@ -454,7 +509,6 @@ local last_shot = 0
 local function fire_mouse_click(delay_override)
     local now = tick() * 1000
     local min_delay = delay_override or State.Aimbot.AutoFireDelay
-    -- En Stealth Mode minimo 150ms entre disparos
     if State.Misc.StealthMode and min_delay < 150 then min_delay = 150 end
     if now - last_shot < min_delay then return end
     last_shot = now
@@ -556,7 +610,7 @@ local hitbox_original = {}
 
 local function expand_hitboxes()
     if not State.Aimbot.HitboxEnabled then return end
-    if State.Misc.StealthMode then return end  -- Stealth bloquea Hitbox
+    if State.Misc.StealthMode then return end
 
     local size = State.Aimbot.HitboxSize
     local part_name = State.Aimbot.HitboxPart
@@ -670,7 +724,7 @@ local function get_closest_target()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
-        if is_ally(player) then continue end
+        if should_skip_aim_target(player) then continue end
         local char, hum, root = get_character(player)
         if not char then continue end
         local part = get_target_part(player, State.Aimbot.TargetPart)
@@ -695,7 +749,7 @@ get_closest_target_silent = function()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
-        if is_ally(player) then continue end
+        if should_skip_aim_target(player) then continue end
         local char, hum, root = get_character(player)
         if not char then continue end
         local part = get_target_part(player, State.Silent.TargetPart)
@@ -718,7 +772,7 @@ local function is_crosshair_on_enemy()
     local tol = 15
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
-        if is_ally(player) then continue end
+        if should_skip_aim_target(player) then continue end
         local char, hum, root = get_character(player)
         if not char then continue end
         local part = get_target_part(player, State.Aimbot.TargetPart)
@@ -784,7 +838,6 @@ track(RunService.RenderStepped:Connect(function()
     end
 end))
 
--- Aim Assist
 track(RunService.RenderStepped:Connect(function()
     if not State.Aimbot.AimAssist then return end
     if State.Aimbot.Enabled then return end
@@ -933,7 +986,6 @@ track(RunService.RenderStepped:Connect(function()
                 if key == "skeleton" then
                     for _, line in ipairs(obj) do line.Visible = false end
                 elseif key == "chams" then
-                    -- skip
                 else
                     obj.Visible = false
                 end
@@ -948,7 +1000,6 @@ track(RunService.RenderStepped:Connect(function()
                 if key == "skeleton" then
                     for _, line in ipairs(obj) do line.Visible = false end
                 elseif key == "chams" then
-                    -- skip
                 else
                     obj.Visible = false
                 end
@@ -962,7 +1013,6 @@ track(RunService.RenderStepped:Connect(function()
                 if key == "skeleton" then
                     for _, line in ipairs(obj) do line.Visible = false end
                 elseif key == "chams" then
-                    -- skip
                 else
                     obj.Visible = false
                 end
@@ -976,7 +1026,6 @@ track(RunService.RenderStepped:Connect(function()
                 if key == "skeleton" then
                     for _, line in ipairs(obj) do line.Visible = false end
                 elseif key == "chams" then
-                    -- skip
                 else
                     obj.Visible = false
                 end
@@ -993,7 +1042,6 @@ track(RunService.RenderStepped:Connect(function()
                 if key == "skeleton" then
                     for _, line in ipairs(obj) do line.Visible = false end
                 elseif key == "chams" then
-                    -- skip
                 else
                     obj.Visible = false
                 end
@@ -1267,15 +1315,12 @@ track(LocalPlayer.CharacterAdded:Connect(function()
 end))
 
 --// ============================================================
---// STEALTH MODE — NUEVO
+--// STEALTH MODE
 --// ============================================================
--- Detecta si el juego actual es de "alto riesgo" (anticheat conocido).
 local function detect_high_risk_game()
-    -- 1) Chequeo por PlaceId contra la lista
     local place_hit = HIGH_RISK_PLACES[game.PlaceId]
     if place_hit then return place_hit end
 
-    -- 2) Chequeo por nombre de scripts conocidos en PlayerScripts y CoreGui
     local roots_to_scan = {}
     pcall(function() table.insert(roots_to_scan, LocalPlayer:FindFirstChild("PlayerScripts")) end)
     pcall(function() table.insert(roots_to_scan, LocalPlayer:FindFirstChild("PlayerGui")) end)
@@ -1299,26 +1344,21 @@ local function detect_high_risk_game()
     return nil
 end
 
--- Aplica el capeo cuando Stealth esta ON
 local function apply_stealth_caps()
     if not State.Misc.StealthMode then return end
 
-    -- Capear Walkspeed
     if State.Player.Walkspeed > STEALTH_WALK_MAX then
         State.Player.Walkspeed = STEALTH_WALK_MAX
     end
 
-    -- Capear JumpPower
     if State.Player.JumpPower > STEALTH_JUMP_MAX then
         State.Player.JumpPower = STEALTH_JUMP_MAX
     end
 
-    -- Capear Speed Multiplier
     if State.Player.SpeedMultiplier > STEALTH_SPEED_MULT_MAX then
         State.Player.SpeedMultiplier = STEALTH_SPEED_MULT_MAX
     end
 
-    -- Forzar OFF features peligrosas
     if State.Player.Fly then State.Player.Fly = false; stop_fly() end
     if State.Player.Noclip then
         State.Player.Noclip = false
@@ -1335,7 +1375,6 @@ local function apply_stealth_caps()
         reset_hitboxes()
     end
 
-    -- Aplicar caps activos al Humanoid
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then
@@ -1348,7 +1387,6 @@ local function apply_stealth_caps()
     end
 end
 
--- Loop de aplicacion
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -1358,7 +1396,6 @@ task.spawn(function()
     end
 end)
 
--- Al iniciar, detectar si el juego es de riesgo y avisar
 do
     local hit = detect_high_risk_game()
     if hit then
@@ -1579,7 +1616,6 @@ local function reset_config()
     if State.Unload then State.Unload() end
 end
 
--- AUTO-LOAD
 local loaded_ok = pcall(load_config)
 
 if State.Silent.Enabled then
@@ -2702,13 +2738,27 @@ add_toggle(misc, "Anti-AFK", State.Misc.AntiAFK, function(v) State.Misc.AntiAFK 
 add_toggle(misc, "Auto Respawn", State.Misc.AutoRespawn, function(v) State.Misc.AutoRespawn = v end)
 add_toggle(misc, "Anti-Fling", State.Misc.AntiFling, function(v) State.Misc.AntiFling = v end)
 
--- NUEVO: Stealth Mode
+-- NUEVO: Team Filter
+local tf = add_section(misc_page, "Team Filter")
+add_toggle(tf, "Ignore Teammates (Auto)", State.Misc.IgnoreTeammates, function(v)
+    State.Misc.IgnoreTeammates = v
+    if v then
+        notify("TEAM FILTER ON", "El aimbot ya no apunta a tus aliados", THEME.Accent)
+    else
+        notify("TEAM FILTER OFF", "Aimbot vuelve a apuntar a todos", THEME.Sub)
+    end
+end)
+local tf_info = text_label(tf, "Detecta automaticamente el equipo via Team, TeamColor,\natributos o ValueObjects. No requiere añadir nombres.", 11, THEME.Sub)
+tf_info.Size = UDim2.new(1, 0, 0, 30)
+tf_info.TextWrapped = true
+tf_info.LayoutOrder = nxt()
+
+-- Stealth Mode
 local stealth = add_section(misc_page, "Stealth Mode")
 add_toggle(stealth, "Enable Stealth Mode", State.Misc.StealthMode, function(v)
     State.Misc.StealthMode = v
     if v then
         notify("STEALTH ON", "Movement caped — Fly/Noclip/Hitbox OFF", THEME.Warn)
-        -- Aplicar cap inmediato al prender
         apply_stealth_caps()
     else
         notify("STEALTH OFF", "Caps removidos — cuidado con el anticheat", THEME.Sub)
